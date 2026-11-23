@@ -2,8 +2,10 @@
 
 Status: accepted (2026-11-23). The owner answered points 1–4 directly and accepted the session's
 recommendations for the rest. Amended by ADR 0008: the `TETVOX_REAL` precision switch
-is replaced by a dtype-generic interface (float32 and float64 at run time), and the optional
-`visits` output is under review (ADR 0008, open point B).
+is replaced by a dtype-generic interface (float32 and float64 at run time). Amended by ADR 0009: the
+optional `visits` output becomes the op `count_claims`, the counts come from the per-tet `status`
+written by `setup_tets`, and the Python call is `setup_tets` + `rasterize` instead of
+`rasterize(mesh, shape)`.
 
 Context: review of the earlier CPU rasteriser `meshing_cxx` against ADR 0005/0006
 (`docs/knowledge/meshing-cxx-reference.md`). This ADR amends ADR 0005 (dtype of the stored π) and

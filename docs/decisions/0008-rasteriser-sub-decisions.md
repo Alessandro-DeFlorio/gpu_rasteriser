@@ -2,8 +2,8 @@
 
 Status: accepted (2026-11-23). Owner answers to the sub-decisions that ADR 0007 left open, and to
 new ones found while planning the build options and the CPU backend. Amends ADR 0007 (precision
-switch replaced) and ADR 0006 (grid limit, status of k). The public shape of `rasterize` (point B
-below) is **still open**.
+switch replaced) and ADR 0006 (grid limit, status of k). Point B (the public shape of `rasterize`)
+and the loader dtype were settled later in ADR 0009.
 
 ## Decision
 
@@ -92,15 +92,14 @@ default build, since the interface is dtype-generic.)
   grid near its far vertex, so `t` reaches about 2⁵⁷; and a copy with one vertex moved by one lattice
   unit, which must count as `outside_window`.
 
-## Still open
-- **B. Public shape of `rasterize`.** What the op is called, what it returns, whether the
-  exactly-once diagnostic (ADR 0007's optional `visits`) is part of it or a separate function, the
-  C++ form (structs, templates over the dtype), and where k goes. To be settled in a dedicated
-  session. Proposal on the table (not accepted): `rasterize` returns only the voxel → tet map
-  (`tet_id`, barycentrics) plus the skipped-tet counts; a separate `count_claims` returns the
-  per-voxel claim count for tests.
-- Under the dtype-generic interface: the dtype `load_atlas_npz` produces (stored dtype, float32, or a
-  `dtype=` argument), and the `TetMesh` annotations.
+## Settled later (ADR 0009)
+- **B. Public shape of `rasterize`.** Settled in ADR 0009: an exposed per-tet setup op
+  (`setup_tets`, the only op taking `snap_bits`, writing a per-tet `status`), `count_skipped`,
+  `locate`, `barycentrics`, `rasterize` (both in one pass) and the diagnostic `count_claims`, which
+  replaces ADR 0007's optional `visits`. The proposal that was on the table (`rasterize` returning
+  the counts) was not adopted: the counts come from the setup op.
+- The dtype of `load_atlas_npz` (`dtype=` argument, default float32) and the generic `TetMesh[F]`
+  annotations: also ADR 0009.
 
 ## Why
 See each point. The common thread: the exact integer core makes precision a storage question, so

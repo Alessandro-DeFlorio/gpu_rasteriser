@@ -39,50 +39,72 @@ Every agent session reads this file first and updates it last. Status: `todo` / 
   compile time is measurably faster; R1 §2.5 barycentrics; multi-claimed voxels unspecified;
   validation rules; packaging; check.sh builds the CPU-only configuration; test tolerances. Open:
   the public shape of `rasterize` (point B).
+- 2026-11-23 Owner approved the op inventory and the rasterisation API (ADR 0009, settles ADR 0008
+  point B). Per-element `__host__ __device__` procedures (`snap`, `setup_tet`, `plane_values`,
+  `owns`, `barycentric`, `row_span`) and one-thing array ops: `setup_tets` (exposed per-tet record,
+  unclipped origin, per-tet `status`, the only op taking `snap_bits`), `count_skipped`, `locate`,
+  `barycentrics`, `rasterize` (= both, bit for bit), `count_claims` (diagnostic, replaces
+  `visits`), then `interpolate`, `interpolate_vjp_values`, `interpolate_vjp_bary`, `tet_moments`,
+  `vertex_grad`, `accumulate<Cost>`. C++ view structs + `Real`-constrained templates instantiated
+  for float/double; CUDA twin adds only a stream. Python mirrors the C++ names, takes arrays,
+  `out=` all or nothing. `load_atlas_npz(dtype=float32)`, generic `TetMesh[F]`.
 
 ## In progress
-- blocked(owner: ADR 0008 open point B) — **Public shape of `rasterize`.** Name, return value,
-  whether the exactly-once diagnostic (`visits`) is part of it or a separate function, C++ form
-  (structs, templates over the dtype), where the run-time k goes. Also the dtype produced by
-  `load_atlas_npz`. To be settled in a fresh session; the build-options and CPU-backend items below
-  wait for it.
+- (none)
 
 ## Next
 - todo — **Build options (ADR 0007/0008), first step.** `TETVOX_ENABLE_CUDA` (default ON; CUDA
   enabled only under it), generated `tetvox/config.hpp` (`tetvox::cuda_enabled`,
   `TETVOX_CUDA_ENABLED`), `tetvox.cuda_enabled`, `device_count()` returning 0 in a CPU-only build,
   `tetvoxConfig.cmake` requiring CUDA only when built with it, `examples/cpp` working in both.
-  `TetMesh` accepts float32 or float64 (dtype-generic, no `TETVOX_REAL`). `scripts/check.sh` also
-  builds the CPU-only library and runs the example against it. Check that the CPU-only build
-  compiles.
-- todo — **Shared header + CPU backend (ADR 0006/0007/0008).** `snap`, `setup_tet`, `inside` and
-  barycentrics as `__host__ __device__` in `csrc/include/tetvox/`, templated on float/double, k a
-  run-time parameter (default 14). `tetvox::cpu::rasterize` uses the bounding-box loop structure of
-  `meshing_cxx` with OpenMP over tets. Its file header credits Koen Van Leemput and Alessandro De
-  Florio and documents the departures (rounding, axis order). Binding plus Python `tetvox.rasterize`
-  dispatching on the input device and dtype. Tests (details in ADR 0008):
-  - a pure-Python exact-integer reference on small meshes (π tolerance 1e-6 f32, 1e-12 f64);
-  - a Kuhn grid with vertices on voxel centres, and scaled;
-  - a rotated placement partly outside the grid;
-  - exhaustive exactly-once ownership on the adult and the four infant meshes;
-  - `π₁..π₃ ≥ 0` and `1 − Σπ ≥ −1e-6`;
-  - the inverted, degenerate, non-finite and out-of-window counts;
-  - an adversarial bit-budget test (span exactly 1024 voxels, and one lattice unit more).
-  Benchmark run-time vs `constexpr` k and report to the owner (ADR 0008). Extend `examples/cpp/` to
-  run the CPU backend on the Kuhn cube.
-- todo — First CUDA rasteriser (K3, `tetvox::cuda::rasterize`), bit-identical to the CPU backend;
-  benchmark on the adult atlas at 256³. Extend `examples/cpp/` to run it on the Kuhn cube too
-  (ADR 0004).
-- todo — Interpolate + VJP ops; `accumulate<Cost>` with the curvature policy parameter (only
-  `None` implemented, R2 addendum A4); optional torch autograd wrapper.
-- todo — Deformation prior as a separate per-tet op on the shared geometry table, including the fold
-  check (R2 addendum A2).
+  Dtype-generic Python containers (ADR 0009): `TetMesh(Generic[F])` and `SamsegAtlas[F]` with
+  `F ∈ {float32, float64}`, `load_atlas_npz(path, *, dtype=np.float32)`; update
+  `atlas-format.md`'s canonical-dtype column. `scripts/check.sh` also builds the CPU-only library
+  and runs the example against it. Check that the CPU-only build compiles.
+- todo — **Shared header + CPU backend (ADR 0006–0009).**
+  - Public headers: `tetvox/types.hpp` (`Real`, `GridShape`, `default_snap_bits`, `TetStatus`,
+    `SkippedTets`, `MeshView<T>`, `TetSetupView<T>`), `tetvox/raster.hpp` (`snap`, `setup_tet`,
+    `plane_values`, `owns`, `barycentric`, `row_span` as `__host__ __device__`, templated on
+    float/double), `tetvox/cpu.hpp`.
+  - `tetvox::cpu::{setup_tets, count_skipped, locate, barycentrics, rasterize, count_claims}`,
+    explicitly instantiated for float and double. `setup_tets` validates (ADR 0008) and takes
+    `snap_bits` (range 0–24). Loop structure of `meshing_cxx`: OpenMP over tets, grid-clipped box,
+    each row solved with `row_span`; `count_claims` tests `owns` at every box voxel instead. File
+    header credits Koen Van Leemput and Alessandro De Florio and lists the departures (rounding,
+    axis order).
+  - Bindings (nanobind overloads per dtype) and Python wrappers with the same names: `TetSetup`
+    dataclass, `TetStatus`, `SkippedTets`, `DEFAULT_SNAP_BITS`, `out=`, allocation in the input's
+    framework (numpy, torch). Regenerate `_core.pyi`.
+  - Tests (details in ADR 0008/0009):
+    - a pure-Python exact-integer reference on small meshes: `TetSetup` fields bit for bit, `tet_id`,
+      `claims`, π (tolerance 1e-6 f32, 1e-12 f64);
+    - `rasterize` bit-identical to `barycentrics(setup, locate(setup, shape))`;
+    - a Kuhn grid with vertices on voxel centres, and scaled;
+    - a rotated placement partly outside the grid;
+    - exhaustive exactly-once ownership (`count_claims`) on the adult and the four infant meshes;
+    - `π₁..π₃ ≥ 0` and `1 − Σπ ≥ −1e-6`;
+    - the inverted, degenerate, non-finite and out-of-window statuses and counts;
+    - an adversarial bit-budget test (span exactly 1024 voxels, and one lattice unit more);
+    - `snap_bits` outside 0–24 rejected.
+  - Benchmark run-time vs `constexpr` k and report to the owner (ADR 0008). Extend `examples/cpp/`
+    to run `setup_tets → rasterize` and `count_claims` on the Kuhn cube.
+- todo — First CUDA backend for ops 1–6 of ADR 0009 (K3 for `locate`/`rasterize`, stream as the
+  last parameter, row offsets via `cudaMallocAsync`; settle Python stream handling), bit-identical
+  to the CPU backend; benchmark on the adult atlas at 256³. Extend `examples/cpp/` to run it on the
+  Kuhn cube too (ADR 0004).
+- todo — `interpolate`, `interpolate_vjp_values`, `interpolate_vjp_bary`, `tet_moments`,
+  `vertex_grad` (ADR 0009 ops 7–11); `accumulate<Cost>` on `setup` + shape with the curvature policy
+  parameter (only `None` implemented, R2 addendum A4); optional torch autograd wrapper (forward
+  `setup_tets` + `rasterize`, backward `tet_moments` + `vertex_grad`).
+- todo — Deformation prior as a separate per-tet op, including the fold check (R2 addendum A2).
+  Decide whether it reads the snapped geometry of `TetSetup` (ADR 0009).
 - todo — CI (lint, mypy, compile-only CUDA build in a CUDA container); prebuilt wheels
   (cibuildwheel) before first release.
 
 ## Experiments (benchmarks that settle open choices)
 - Channel layout `(X, Y, Z, K)` vs `(K, X, Y, Z)` for K ∈ {8, 16, 44} (R2 addendum A6).
-- Raster buffer: 3 stored barycentrics (current choice) vs 4 vs `tet_id` only and recompute.
+- Raster buffer: 3 stored barycentrics (current choice) vs 4 vs `tet_id` only and recompute
+  (`locate` + `barycentrics`, ADR 0009).
 - float32 vs two-level vs float64 per-tet moments: error against a float64 CPU reference, and time
   (R2 addendum A5).
 - Tet-parallel vs voxel-parallel accumulation.
@@ -97,6 +119,4 @@ Every agent session reads this file first and updates it last. Status: `todo` / 
 - `TetMesh.values` is required, so a mesh without data uses shape `(N, 0)`. Make it optional if
   that proves awkward (a small, local change).
 - How far to take curvature after `None` (`GaussNewton` is the cheapest next step, R2 addendum A4).
-- ADR 0008 open point B (public shape of `rasterize`) and the dtype `load_atlas_npz` produces: see
-  "In progress". A hand-off prompt for a fresh session was given to the owner on 2026-11-23.
 - Run-time vs compile-time k (ADR 0008): decide from the CPU-backend benchmark.
