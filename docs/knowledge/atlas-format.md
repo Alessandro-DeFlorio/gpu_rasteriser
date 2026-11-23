@@ -69,3 +69,37 @@ Implications for rasterisation:
   `x_d = max_d`, both integers). A strict half-open (top-left) rule would drop one whole layer of
   boundary voxels on the "non-owning" side. The rule needs a policy for samples on the outer
   boundary, e.g. treat them as inside, or define the grid so it excludes/includes them explicitly.
+
+### Sparsity of `alphas` (adult atlas, measured 2026-11-23 for research R2)
+
+Measured with `(alphas > 0).sum(1)` per vertex and `(alphas[tetrahedra] > 0).any(1).sum(1)` per
+tet:
+- non-zero `α` per vertex: mean 2.41, median 2, p99 4, max 8 (of K = 44);
+- classes active in a tet (union over its 4 vertices): mean 3.15, median 3, p99 6, max 12;
+  volume-weighted mean 2.75;
+- 10.5% of the volume lies in tets with a single active class (identical `α` at all 4 vertices).
+  The data-term gradient is exactly zero there;
+- after merging to the 8 classes of `sharedGMMParameters_adult.txt`: 2.84 active classes per tet on
+  average.
+
+Implication: store per-vertex priors sparsely (8 entries per vertex cover this atlas).
+
+### Rasterisation workload and exact-arithmetic facts (measured in research R1, 2026-11-23)
+
+Adult atlas on its own template grid (181×217×181 voxel centres), vertices snapped to 2⁻¹⁴ voxel.
+Details and method: `docs/research/R1-watertight-tet-rasterisation.md`.
+
+- Smallest tet altitude: 0.179 voxel (p1 of the per-tet minimum: 0.56, median 1.9). Snapping the
+  vertices to 2⁻ᵏ voxel inverts no tet for the tested k = 4, 6, 8, 10, 12, 14, 16.
+- Bounding-box candidates: 79.07 M in total, i.e. 11.3 inside tests per owned voxel (fill 8.9%). The
+  top 0.1% of tets hold 17% of the candidates, the top 1% hold 35%.
+- (tet, y, z) rows: 10.57 M. Tet–brick pairs by bounding box: 3.60 M (4³ bricks), 1.30 M (8³),
+  0.70 M (16³); mean list length per brick 31 / 88 / 348.
+- Exact ties are common on the template grid: 630,255 (candidate, face) pairs have a plane function
+  that is exactly zero. After a generic affine placement there were none.
+- With the half-open tie-breaking rule (sample shifted by +ε, +ε², +ε³), exactly the 6,998,400
+  centres of [0,180)×[0,216)×[0,180) are owned, each once. The 110,737 centres on the planes
+  `x_d = max_d` are owned by no tet.
+- The GEMS sources live in `github.com/freesurfer/samseg` (`gems/`, branch `dev`). The FreeSurfer
+  repository keeps an identical copy of `kvlTetrahedronInteriorConstIterator.hxx` under
+  `attic/gems/`.

@@ -61,3 +61,28 @@ tets, scaled by `κ`.
 Vertices can be a linear model `v = Φθ + δ`. Gradients and Hessians map via `Φᵀ(·)` and
 `Φᵀ(·)Φ`. §5 covers estimating `α` and the reference mesh itself. This is not needed for the
 rasteriser.
+
+## Generic chain rule through π (research R2; checked by finite differences, 2026-11-23)
+
+For any per-voxel loss `L(π)` with `g = ∂L/∂π` (4 free variables), `P = [p₀ p₁ p₂ p₃]ᵀ`:
+- `∂π_j/∂v_i = −π_i p_j` for all `i, j = 0..3`.
+- `∂L/∂v_i = −π_i Pᵀg = −π_i A⁻ᵀ ḡ`, with `ḡ = (g₁−g₀, g₂−g₀, g₃−g₀)`. Only `ḡ` matters, since
+  `Σ_m p_m = 0`. `Pᵀg` is the spatial gradient `∇_x L`. The data term has `g = −r`.
+- `∂²π_m/∂v_i∂v_jᵀ = π_j p_m p_iᵀ + π_i p_j p_mᵀ`.
+- `∂²L/∂v_i∂v_jᵀ = π_i π_j Pᵀ H^π P − p_j G_iᵀ − G_j p_iᵀ`, with `H^π = ∂²L/∂π∂πᵀ` and
+  `G_i = ∂L/∂v_i`. The §2.3 EM-bound Hessian is the case `H^π = diag(r_m/π_m)`. The exact data-term
+  Hessian is the case `H^π = r rᵀ`.
+- `r_m/π_m` diverges as `π_m → 0` (a voxel on a face), so the EM-bound form needs a clamp. The last
+  two terms are indefinite; without them the block is PSD whenever `H^π` is.
+
+Details and the per-tet accumulation: `docs/research/R2-decoupling-cost-from-rasteriser.md`.
+
+## Reference implementation (GEMS), verified 2026-11-23
+
+- The GEMS C++ code is in `github.com/freesurfer/samseg` under `gems/` (read at commit `fdac5ad`).
+  The main `freesurfer/freesurfer` tree only keeps an old copy in `attic/gems`.
+- samseg merges the structure priors into super-structure classes before deforming the mesh
+  (`samseg/merge_alphas.py`, `kvlMergeAlphas`), so the deformation cost runs on the merged classes
+  (8 in `sharedGMMParameters_adult.txt`), not on all K structures.
+- GEMS has no Hessian of the data term. Its deformation optimisers are L-BFGS (the default),
+  conjugate gradient and gradient descent.

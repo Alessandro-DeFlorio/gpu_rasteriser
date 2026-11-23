@@ -10,10 +10,13 @@ Every agent session reads this file first and updates it last. Status: `todo` / 
   `docs/knowledge/atlas-format.md`.
 
 ## In progress
-- doing — R1 research: watertight tet rasterisation, fixed point, load balancing
-  (`docs/research/briefs/R1-watertight-tet-rasterisation.md`).
-- doing — R2 research: decoupling cost/gradient from the rasteriser
-  (`docs/research/briefs/R2-decoupling-cost-from-rasteriser.md`).
+- doing — Owner review of R1 (`docs/research/R1-watertight-tet-rasterisation.md`, draft
+  2026-11-23). Proposed: Simulation of Simplicity-style tie-break `X + (ε, ε², ε³)`; vertices snapped
+  to 2⁻¹⁴ voxel with exact int64 plane tests (`__int128` in setup); a stateless row-parallel span
+  kernel first, with a walk from the previous owner as the alternative.
+- doing — Owner review of R2 (`docs/research/R2-decoupling-cost-from-rasteriser.md`, draft
+  2026-11-23). Proposed contract: per-voxel `∂L/∂π` with a generic path (rasterise → interpolate →
+  bary VJP) plus a fused C++ `accumulate<Cost>` functor for the samseg data term.
 
 ## Next
 - todo — Owner reviews R1/R2 and turns the conclusions into ADRs (rasterisation rule, number
@@ -26,6 +29,13 @@ Every agent session reads this file first and updates it last. Status: `todo` / 
   (cibuildwheel) before first release.
 
 ## Open questions
-- Policy for voxel centres exactly on the outer domain boundary (see atlas-format.md).
+- Policy for voxel centres exactly on the outer domain boundary. Half-open leaves the 110,737
+  centres on `x_d = max_d` unowned on the template grid. R1 describes an exact closed-box mode.
+- (R1) Row spans vs walk from the previous owner: needs a replay of a real registration trajectory.
+- (R1) Behaviour on `D ≤ 0` (inverted tets) and on vertices outside the grid window.
 - Meaning of `log_mass_laplace_kappa1` and `mass_laplace_n_free` in the atlases (ask owner).
 - Output grid definition: template grid only, or arbitrary grid via the affine?
+- (R2) Curvature to support: clamped EM bound `diag(r/π)` or exact `r rᵀ`, with or without the
+  indefinite terms. GEMS itself uses no Hessian (L-BFGS).
+- (R2) Real target size: 256³ × K=44, or the template grid × 8 merged classes (samseg merges
+  before deforming)?
