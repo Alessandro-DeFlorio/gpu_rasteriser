@@ -1,6 +1,7 @@
 # Architecture
 
-Status: skeleton. Only the build chain and the atlas loader exist. The op contracts (ADR 0005, R2 and
+Status: skeleton. Only the build chain (C++ package plus optional Python module) and the atlas
+loader exist. The op contracts (ADR 0005, R2 and
 its addendum) and the rasterisation rule (ADR 0006) are decided.
 
 ## Layers
@@ -10,9 +11,13 @@ its addendum) and the rasterisation rule (ADR 0006) are decided.
    - `csrc/include/tetvox/`: header-only `__host__ __device__` maths (barycentrics, exact
      predicates, moment accumulation) and the fused-path templates (`accumulate<Cost>`), usable from
      kernels, from the CPU reference, and from users' own `.cu` files.
-   - `csrc/src/`: kernels and host launchers, compiled into `tetvox_core`. Planned to be exported as
-     the CMake target `tetvox::tetvox`.
-2. **Bindings** (`csrc/bindings/module.cpp`), built only with `TETVOX_BUILD_PYTHON` (planned). A
+   - `csrc/src/`: kernels and host launchers, compiled into `tetvox_core`, which is exported as the
+     CMake target `tetvox::tetvox` (`find_package(tetvox)` or `add_subdirectory`). Consumers enable
+     CUDA and choose the cudart flavour themselves.
+   - `examples/cpp/`: a stand-alone consumer of the installed package, built and run by
+     `scripts/check.sh`.
+2. **Bindings** (`csrc/bindings/module.cpp`), built only with `TETVOX_BUILD_PYTHON` (ON under
+   scikit-build, OFF in a plain CMake build). Links cudart statically (ADR 0001). A
    nanobind module `tetvox._core` taking DLPack arrays (`nb::ndarray`), so numpy, torch, cupy and
    others work (ADR 0001).
 3. **Python package** (`src/tetvox/`). Thin: bindings re-exported with types, `TetMesh` and

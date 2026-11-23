@@ -19,7 +19,7 @@ Always work inside the conda env. Base python has no numpy.
 source ~/miniconda3/etc/profile.d/conda.sh && conda activate tetvox-dev
 conda env create -f environment.yml         # first time only
 pip install --no-build-isolation -ve .      # once; `import tetvox` then rebuilds C++/CUDA automatically
-scripts/check.sh                            # all gates: stub freshness, ruff, mypy --strict, clang-format, pytest
+scripts/check.sh                            # all gates: stub freshness, ruff, mypy --strict, clang-format, C++ example, pytest
 pytest tests/test_mesh.py::test_load_adult_atlas   # a single test
 python -m nanobind.stubgen -m tetvox._core -o src/tetvox/_core.pyi   # after changing bindings
 python scripts/inspect_atlas.py atlases/adult_template/atlas_adult.npz  # atlas statistics
@@ -33,7 +33,12 @@ the `researcher` agent (Fable), which writes to `docs/research/`.
 - `csrc/include/tetvox/`: header-only `__host__ __device__` maths, shared by kernels and the CPU
   reference.
 - `csrc/src/*.cu`: kernels, built into the static lib `tetvox_core`.
-- `csrc/bindings/module.cpp`: the `tetvox._core` nanobind module.
+- `csrc/bindings/module.cpp`: the `tetvox._core` nanobind module, built only with
+  `TETVOX_BUILD_PYTHON` (ON under scikit-build, OFF in a plain CMake build).
+- `CMakeLists.txt`, `cmake/`: export `tetvox_core` as the C++ package `tetvox::tetvox` (ADR 0004).
+  The version is set only in `project()`.
+- `examples/cpp/`: stand-alone consumer of the installed C++ package; `scripts/check.sh` builds and
+  runs it.
 - `src/tetvox/`: the Python API.
 - `tests/`: `conftest.py` provides a synthetic Kuhn-cube mesh (always available) and real-atlas
   fixtures that skip when absent.

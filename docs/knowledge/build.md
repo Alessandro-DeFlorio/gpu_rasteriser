@@ -5,9 +5,24 @@ Verified on the dev machine (2026-11-23):
 - conda env `tetvox-dev`: Python 3.12, nanobind 2.x, scikit-build-core 1.1.
 
 ## How the build works
-- `pyproject.toml` → scikit-build-core → `CMakeLists.txt`.
-- `tetvox_core` is a static library (`csrc/src/*.cu`, headers in `csrc/include/tetvox`). It is linked
-  into the nanobind module `tetvox._core`, which is installed into the `tetvox` package.
+- `CMakeLists.txt` builds two things (ADR 0004):
+  - the C++ package. `tetvox_core` is a static library (`csrc/src/*.cu`, public headers in
+    `csrc/include/tetvox`). It is exported as `tetvox::tetvox` (file `libtetvox.a`), with
+    `tetvoxConfig.cmake` from `cmake/tetvoxConfig.cmake.in`. The install rules are in component
+    `cpp`.
+  - the nanobind module `tetvox._core`, only with `TETVOX_BUILD_PYTHON`. The option defaults to ON
+    when `SKBUILD` is defined and to OFF in a plain CMake build, which then needs neither Python nor
+    nanobind. The module links `tetvox_core` and is installed into the `tetvox` package, in
+    component `python`.
+- Python build: `pyproject.toml` → scikit-build-core → `CMakeLists.txt`.
+  `install.components = ["python"]` keeps headers, the static lib and the CMake config out of the
+  wheel.
+- The version is set once, in `project(tetvox VERSION ...)`. `pyproject.toml` reads it from there
+  with the scikit-build-core regex metadata provider.
+- Public headers are globbed (`CONFIGURE_DEPENDS`) into a `FILE_SET HEADERS`, so a new header is
+  installed without editing CMake. Sources are listed explicitly.
+- C++20 reaches consumers through `target_compile_features(... PUBLIC cxx_std_20 cuda_std_20)`.
+  There are no global `CMAKE_CXX_STANDARD` variables.
 - Editable install (`pip install --no-build-isolation -ve .`) uses `editable.rebuild = true`. Importing
   `tetvox` re-runs `cmake --build` in `build/<wheel_tag>/editable`, so edits to C++/CUDA are picked up on the
   next `import tetvox` without reinstalling. Reinstall only after changing `pyproject.toml` or
@@ -16,7 +31,19 @@ Verified on the dev machine (2026-11-23):
 - CUDA architectures default to `native`. Pass
   `-Ccmake.define.CMAKE_CUDA_ARCHITECTURES="..."` for portable builds. CUDA 13 supports `sm_75`
   and newer only.
-- cudart is linked statically to avoid clashing with torch's bundled runtime (ADR 0001).
+- cudart: only `_core` sets `CUDA_RUNTIME_LIBRARY Static`, to avoid clashing with torch's bundled
+  runtime (ADR 0001). The C++ target leaves the choice to consumers (ADR 0004).
+
+## C++ consumers
+- `scripts/check.sh` builds the library with plain CMake in `build/cpp/core`, installs component
+  `cpp` into `build/cpp/install`, then builds and runs `examples/cpp` against it
+  (`-DCMAKE_PREFIX_PATH=<prefix>`).
+- (Verified 2026-11-23) A consumer must enable the CUDA language. Then CMake links the CUDA runtime
+  it asks for: static by default, shared with `-DCMAKE_CUDA_RUNTIME_LIBRARY=Shared`. In a CXX-only
+  project the link fails with `undefined reference to __cudaRegisterFatBinary`. `tetvoxConfig.cmake`
+  therefore refuses, with a readable message, when CUDA is not enabled.
+- (Verified 2026-11-23) `add_subdirectory(<tetvox>)` from a CUDA project works through the
+  `tetvox::tetvox` alias. The parent's `CMAKE_CUDA_ARCHITECTURES` takes precedence.
 
 ## Type stubs
 `src/tetvox/_core.pyi` is generated and committed. Regenerate after changing bindings:
@@ -26,6 +53,9 @@ Verified on the dev machine (2026-11-23):
 `scripts/check.sh` fails if the committed stub is stale.
 
 ## Gotchas
+- (Verified 2026-11-23) `project(... CUDA)` replaces an unset `CMAKE_CUDA_ARCHITECTURES` with the
+  compiler default (`75` for nvcc 13.5). The `native` default must therefore be set *before*
+  `project()`. Set after it, as the bootstrap did, it only ever applied when scikit-build passed it.
 - Settings under `[tool.scikit-build]` such as `editable.verbose` are baked in at install time, so
   reinstall after changing them.
 - The base conda python has no numpy. Always work inside `tetvox-dev`.

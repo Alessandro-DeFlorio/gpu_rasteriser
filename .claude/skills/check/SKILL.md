@@ -1,6 +1,6 @@
 ---
 name: check
-description: Build tetvox and run every quality gate (stub freshness, ruff, mypy --strict, clang-format, pytest). Use before declaring any code change done.
+description: Build tetvox and run every quality gate (stub freshness, ruff, mypy --strict, clang-format, C++ packaging example, pytest). Use before declaring any code change done.
 ---
 
 Run inside the `tetvox-dev` conda env:

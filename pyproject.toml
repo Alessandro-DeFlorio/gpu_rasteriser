@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "tetvox"
-version = "0.0.1"
+dynamic = ["version"]
 description = "Fast, watertight, differentiable CUDA voxeliser for tetrahedral meshes"
 readme = "README.md"
 license = "MIT"
@@ -23,6 +23,12 @@ editable.rebuild = true
 editable.verbose = false
 wheel.packages = ["src/tetvox"]
 cmake.build-type = "Release"
+install.components = ["python"]  # the wheel gets the extension only, not the C++ package (ADR 0004)
+
+[tool.scikit-build.metadata.version]
+provider = "scikit_build_core.metadata.regex"
+input = "CMakeLists.txt"
+regex = 'project\(tetvox VERSION (?P<value>[0-9.]+)'
 
 [tool.scikit-build.cmake.define]
 # "native" builds for the GPU(s) in this machine. Override for portable builds, e.g.

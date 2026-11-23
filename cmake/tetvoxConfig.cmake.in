@@ -1,0 +1,15 @@
+@PACKAGE_INIT@
+
+# tetvox is a static library with CUDA code. Linking it needs the CUDA runtime, which CMake adds
+# (static or shared, per CMAKE_CUDA_RUNTIME_LIBRARY) only in projects that enable CUDA.
+get_property(_tetvox_languages GLOBAL PROPERTY ENABLED_LANGUAGES)
+if(NOT "CUDA" IN_LIST _tetvox_languages)
+  set(tetvox_FOUND FALSE)
+  string(CONCAT tetvox_NOT_FOUND_MESSAGE
+         "tetvox needs the CUDA language: call project(... CUDA) or enable_language(CUDA) before "
+         "find_package(tetvox).")
+  return()
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/tetvoxTargets.cmake")
+check_required_components(tetvox)

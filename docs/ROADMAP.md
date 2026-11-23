@@ -15,20 +15,23 @@ Every agent session reads this file first and updates it last. Status: `todo` / 
   facts in `docs/knowledge/samseg-runs.md`.
 - 2026-11-23 Owner approved R1's core proposal: ADR 0006 (exact SoS tie-break, k = 14 snapping with
   int64 tests, K3 row kernel first). Python `out=` convenience confirmed (ADR 0005).
+- 2026-11-23 Build restructure for ADR 0004: `TETVOX_BUILD_PYTHON` option, exported
+  `tetvox::tetvox` package (component `cpp`, kept out of the wheel), `examples/cpp/` consumer built
+  and run by `scripts/check.sh`, static cudart only on `_core`, version set only in `project()`.
+  The `native` CUDA-arch default now works in plain CMake builds too (`build.md`).
 
 ## In progress
 - (none)
 
 ## Next
-- todo — Build restructure for ADR 0004: `TETVOX_BUILD_PYTHON` option, exported `tetvox::tetvox`
-  CMake target, `examples/cpp/` consumer built by `scripts/check.sh`, static cudart only for the
-  Python module. Update CLAUDE.md's Layout section when it lands.
 - todo — Split `TetMesh` (ADR 0005): a minimal mesh (positions, tetrahedra, per-vertex values) and
   a samseg atlas wrapper for the rest (affine, `can_move`, stiffness, prior normaliser, names,
   colours, labels).
 - todo — CPU reference rasteriser (exact, slow) in the shared headers, used as the test oracle for
   watertightness: every voxel centre in the domain is owned by exactly one tet.
 - todo — First CUDA rasteriser → per-voxel (tet id, π₁..π₃); benchmark on the adult atlas at 256³.
+  Extend `examples/cpp/` to run it on the Kuhn-cube mesh, as ADR 0004 asks (today the example only
+  calls `device_count`).
 - todo — Interpolate + VJP ops; `accumulate<Cost>` with the curvature policy parameter (only
   `None` implemented, R2 addendum A4); optional torch autograd wrapper.
 - todo — Deformation prior as a separate per-tet op on the shared geometry table, including the fold
