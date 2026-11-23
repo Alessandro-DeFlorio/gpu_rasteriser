@@ -1,6 +1,6 @@
 # R2 — Decoupling the cost function and its derivatives from the rasteriser
 
-Status: draft
+Status: reviewed by the owner (2026-11-23); decisions in ADR 0005. Addendum at the end.
 Brief: `briefs/R2-decoupling-cost-from-rasteriser.md`
 
 Every claim is tagged **[V]** (verified: read in the cited source, or checked numerically by the
@@ -562,3 +562,100 @@ https://github.com/NVlabs/nvdiffrast
 Numerical checks were throwaway numpy scripts run outside the repository (single-tet finite
 differences of (1)–(6); a whole-mesh gradient and continuity test; `α` sparsity statistics; the
 EM-bound curvature near a face). They are not kept; the test list above says how to reproduce them.
+
+## Addendum (2026-11-23, after owner review)
+
+Written after the owner's questions on how far behaviour can be abstracted. Tags as above.
+
+### A1. What to separate, and the rule for it
+
+Separate two stages when the data passed between them is small; fuse them when it is large [I].
+
+| Stage | Passes on | Size at 256³ |
+|---|---|---|
+| per-tet geometry (`A⁻¹`, `v₀`, `det A`) | per-tet table | 16 MB (adult atlas) |
+| rasterise (ownership only) | `tet_id` + `π₁..π₃` | 268 MB |
+| consumers (interpolate, cost, user code) | depends on the consumer | up to 2.95 GB per K = 44 field |
+| backward (`bary_vjp`) | `ḡ`, 3 floats per voxel | 201 MB |
+| deformation prior | nothing per voxel | — |
+
+Only a materialised many-channel field is expensive, and the `∂L/∂π` contract lets the fused path
+avoid it. Quantities that are mere readings of the raster buffer need no op [I]: coverage is
+`tet_id >= 0`, the owner is `tet_id`, the n-th barycentric is `bary[..., n]`, and "every voxel owned
+exactly once" is a reduction over `tet_id` (the watertightness test).
+
+### A2. The deformation prior is a separate op
+
+The prior (`samseg-math.md` §3) is a sum over tets of a function of `A`, `A_ref` and `det A`. It
+reads no voxel [V: samseg-math.md]. It is therefore its own op on the shared per-tet geometry table,
+and the caller adds `data + κ·prior`. Two things that GEMS performs inside its tet loop belong next to
+the prior, not inside the rasteriser [I]:
+- the fold check (`det A ≤ 0`), which must run *before* rasterising, because a folded mesh is not a
+  partition (§4). ADR 0005: report and return `+inf`;
+- the boundary condition (sliding, fixed axes), which is a projection of the vertex gradient after
+  all terms are summed.
+
+### A3. Run-time-defined costs: feasibility levels [I]
+
+| Level | Who writes what | Rebuild of tetvox | Performance vs fused |
+|---|---|---|---|
+| 0 | any torch / cupy / numpy expression on materialised fields (generic path); `torch.compile` can fuse it | no | memory-bound by field size; fine for small C |
+| 1 | a user kernel (Triton, Numba, CuPy, or C++ in the user's own project) reads `(tet_id, bary)` and vertex data, writes `ḡ`, then calls `bary_vjp` | no | option (iv): ~0.65 GB extra traffic per evaluation |
+| 2 (C++) | a `Cost` struct instantiated with `accumulate<Cost>` in the user's own `.cu` file (ADR 0004) | no (the user compiles) | fused |
+| 3 | a `Cost` source string compiled at run time with NVRTC (directly, CuPy `RawModule` or Jitify) together with the public headers, cached | no | fused, plus about a second of compile on first use |
+
+Level 3 needs the public headers in the wheel, an NVRTC runtime dependency, a compile cache, and
+gives compile errors from inside tetvox's kernel. Linking a precompiled kernel to user device code
+through LTO-IR (`nvJitLink`) is possible but newer and harder. Device function pointers or virtual
+calls prevent inlining and should not be used. Level 3 only beats level 1 for many-channel costs,
+and the main one (samseg) is built in. Decision (ADR 0005): levels 0–2 now; keep level 3 possible by
+making the `Cost` concept depend on the public headers only.
+
+### A4. Curvature infrastructure without changing the cost interface [I unless tagged]
+
+Make the curvature a template policy of the accumulator. The functor signature already has an
+optional `h` output, so the policies differ only in what the accumulator sums:
+
+| Policy | Functor must return | Accumulators per tet | Notes |
+|---|---|---|---|
+| `None` | `cost`, `g` | 12 | gradient only (the current target) |
+| `GaussNewton` | `cost`, `g` | 12 + 60 | `C_ij = Σ_x π_i π_j ḡ ḡᵀ` in eq. (6); PSD |
+| `Diagonal` | `cost`, `g`, `h[4]` | 12 + 40 | EM bound `h = r/π`, needs clamping (§3) |
+| `Full` | `cost`, `g`, reduced 3×3 `H̄` | 12 + 60 | general `L(π)` |
+
+- `GaussNewton` is the "covariance of the Jacobian". With `L = Σ_x ℓ_x` and `J` the matrix whose rows
+  are `∇_v ℓ_x`, `JᵀJ = Σ_x ∇_v ℓ_x ∇_v ℓ_xᵀ`. Per voxel `∇_{v_i} ℓ_x = −π_i A⁻ᵀ ḡ`, so the tet block
+  is `A⁻ᵀ C_ij A⁻¹` with the `C_ij` above. It needs no extra output from the functor.
+- For the samseg data term `D = −log(l·π)`, `H^π = r rᵀ = g gᵀ`, so `GaussNewton` is exactly the
+  data-term Hessian without the indefinite geometric terms [V: from §3, `H^π = r rᵀ`].
+- The finaliser turns the moments into `(T, 12, 12)` blocks, or keeps them for matrix-free
+  Hessian–vector products. Adding the geometric terms is a flag in the finaliser, which uses the
+  12 gradient moments only.
+- Now: implement `None` only, but give the moment struct and the finaliser a policy parameter.
+
+### A5. float64 accumulation [I, not measured]
+
+- The dev GPU is a GB20x-class part (RTX PRO 1000 Blackwell laptop) [V: `nvidia-smi`]. On consumer
+  and workstation NVIDIA GPUs FP64 throughput is a small fraction of FP32 (1/64 on recent
+  generations) [I: from NVIDIA's published ratios; not checked for this part].
+- Accumulating the 12 gradient moments in float64 for every voxel adds 12 FP64 FMAs per voxel. On
+  such a GPU that can rival the rest of the kernel.
+- A two-level sum costs almost nothing: float32 partial sums per thread or warp (over tens to
+  hundreds of voxels), then float64 for the combination across blocks and for the total cost. FP64
+  operations then scale with the number of blocks, not voxels. FP64 `atomicAdd` is native from
+  sm_60.
+- Bitwise reproducibility is a separate property. It requires a fixed summation order (no atomics,
+  or a deterministic reduction), not float64. The owner does not require it (ADR 0005).
+- Experiment: compare float32, two-level and full float64 moments against a float64 CPU reference on
+  the adult atlas, for both error and time.
+
+### A6. Channel layout of per-voxel fields [I]
+
+- `(X, Y, Z, K)`: one voxel's K values are contiguous. Good when a warp cooperates on one voxel or
+  a thread loops over K for its voxel with K small; for K = 44 adjacent threads read addresses 176 B
+  apart, which coalesces poorly.
+- `(K, X, Y, Z)`: adjacent threads (adjacent voxels) read adjacent addresses for every k, which
+  coalesces well in a voxel-parallel kernel, but each thread touches K separate cache lines.
+- The fused path never materialises `α`, so this only affects inputs such as the likelihood image
+  `l_k` and the generic path's fields. Kernels take a channel stride, so both layouts work (ADR
+  0005). Benchmark K ∈ {8, 16, 44} in both layouts and pick the native one.

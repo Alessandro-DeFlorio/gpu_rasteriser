@@ -19,8 +19,8 @@ Loader: `tetvox.load_atlas_npz(path) -> TetMesh` (`src/tetvox/mesh.py`).
 | `colors` | i64 | (K, 4) | `colors` | RGBA |
 | `FreeSurferLabels` | i64 | (L,) | `freesurfer_labels` | FreeSurfer label ids. **L ≠ K in reduced-class atlases** (7-class atlases keep the full 41/44 list) |
 | `K` | f64 | () | `stiffness` | 0.1 in all atlases. Inferred: samseg mesh stiffness κ (`meshStiffness` default 0.1) |
-| `log_mass_laplace_kappa1` | f64 | () | not loaded | only in full-class atlases; meaning unknown (100.0 adult, −186309 infant) |
-| `mass_laplace_n_free` | i64 | () | not loaded | only in full-class atlases; meaning unknown (162454 adult, 101437 infant; not 3·N) |
+| `log_mass_laplace_kappa1` | f64 | () | not loaded | only in full-class atlases. Laplace approximation of the deformation prior's cost (log mass) at κ = 1 (owner, 2026-11-23). The POC logs it rescaled to the effective κ as `log Z_u (Laplace)` (100.0 adult, −186309 infant) |
+| `mass_laplace_n_free` | i64 | () | not loaded | only in full-class atlases. Number of free coordinates in that Laplace approximation (162454 adult, 101437 infant; not 3·N). Prior-side data, not used by the rasteriser (ADR 0005) |
 
 Canonical dtypes: f32 for geometry and priors, f64 for the affine. Only `atlas_adult_7_classes.npz`
 stores f64, and its values are the same atlas mesh.

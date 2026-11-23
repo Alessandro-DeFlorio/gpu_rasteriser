@@ -1,6 +1,6 @@
 # R1 — Watertight solid rasterisation of tetrahedral meshes on the GPU
 
-Status: draft (researcher agent, 2026-11-23; not yet reviewed by the owner)
+Status: accepted by the owner (2026-11-23); decisions in ADR 0006 (rule, arithmetic, kernel) and ADR 0005 (policies)
 Brief: `briefs/R1-watertight-tet-rasterisation.md`
 
 ## Question

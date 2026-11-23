@@ -1,5 +1,6 @@
 # Local data: not redistributable / too large (see docs/decisions/0003-data-not-in-git.md)
 atlases/
+data/
 literature/*.pdf
 
 # Build artefacts

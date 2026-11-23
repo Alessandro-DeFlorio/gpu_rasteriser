@@ -13,3 +13,5 @@ Status: accepted (2026-11-23)
   statistics in `atlas-format.md`, equations in `samseg-math.md`. A fresh clone must not need them to
   understand the design.
 - Expected local layout: `atlases/adult_template/*.npz` and `atlases/subtemplates_12/*.npz`.
+- Meshes from real samseg runs (derived from subject data) go under `data/samseg_runs/`, also
+  gitignored (added 2026-11-23, see `docs/knowledge/samseg-runs.md`). Subject images are not copied.

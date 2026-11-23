@@ -1,19 +1,42 @@
 # Architecture
 
-Status: skeleton. Only the build chain and the atlas loader exist. The rasteriser design is pending
-research R1/R2 (`docs/research/`).
+Status: skeleton. Only the build chain and the atlas loader exist. The op contracts (ADR 0005, R2 and
+its addendum) and the rasterisation rule (ADR 0006) are decided.
 
 ## Layers
-1. **C++/CUDA core** (`csrc/`). Framework-agnostic and operates on raw device pointers.
-   - `csrc/include/tetvox/`: header-only `__host__ __device__` maths (barycentrics, fixed-point
-     predicates), usable from kernels and from CPU reference code.
-   - `csrc/src/`: kernels and host launchers, compiled into the static lib `tetvox_core`.
-2. **Bindings** (`csrc/bindings/module.cpp`). A nanobind module `tetvox._core` that takes DLPack
-   arrays (`nb::ndarray`), so numpy, torch, cupy and jax all work (ADR 0001).
-3. **Python package** (`src/tetvox/`). Typed API: `TetMesh` and `load_atlas_npz` in `mesh.py`. An
-   optional torch autograd wrapper will live here later.
+1. **C++/CUDA library** (`csrc/`), a first-class interface on its own (ADR 0004). It is
+   framework-agnostic: raw device pointers, a caller-provided `cudaStream_t`, caller-allocated
+   outputs. Public input validation happens here, once.
+   - `csrc/include/tetvox/`: header-only `__host__ __device__` maths (barycentrics, exact
+     predicates, moment accumulation) and the fused-path templates (`accumulate<Cost>`), usable from
+     kernels, from the CPU reference, and from users' own `.cu` files.
+   - `csrc/src/`: kernels and host launchers, compiled into `tetvox_core`. Planned to be exported as
+     the CMake target `tetvox::tetvox`.
+2. **Bindings** (`csrc/bindings/module.cpp`), built only with `TETVOX_BUILD_PYTHON` (planned). A
+   nanobind module `tetvox._core` taking DLPack arrays (`nb::ndarray`), so numpy, torch, cupy and
+   others work (ADR 0001).
+3. **Python package** (`src/tetvox/`). Thin: bindings re-exported with types, `TetMesh` and
+   `load_atlas_npz` in `mesh.py`, and an optional torch autograd wrapper later.
 
-## Planned data flow (to be confirmed by R1/R2)
-mesh (vertices v, tets) → **rasterise** → per-voxel (tet id, barycentrics π) → **interpolate**
-per-vertex fields (e.g. α) → user / pluggable **cost** → upstream ∂L/∂π or ∂L/∂f per voxel →
-**scatter** gradient (and Hessian blocks) back to vertices using ∂π/∂v (samseg-math.md §2).
+## Data flow (ADR 0005, R2)
+- Inputs are in **voxel index space**. Voxel centres are the integer points of
+  `[0,X)×[0,Y)×[0,Z)`. Any affine is applied to the vertices by the caller.
+- Mesh = positions `(N,3)`, tetrahedra `(T,4)`, per-vertex values `(N,C)`. Priors, stiffness and
+  display metadata are not part of it.
+
+```
+positions, tets ──► per-tet geometry (A⁻¹, v₀, det A) ──► deformation prior (separate op, fold check)
+        │
+        └──► rasterise ──► raster buffer: tet_id (int32), π₁..π₃ (3×f32)
+                              │
+          generic path:       ├──► interpolate(values) ──► user cost (any framework) ──► ∂L/∂f
+                              │        interpolate_vjp ──► ∂L/∂values, ∂L/∂π
+                              │    or a user kernel on the raster buffer ──────────► ∂L/∂π
+                              │                                     bary_vjp ──► ∂L/∂v
+          fused path:         └──► accumulate<Cost, Curvature> ──► cost, ∂L/∂v, (tet blocks)
+```
+
+- Contract between cost and geometry: per-voxel `∂L/∂π`, reduced to `ḡ` (3 floats). Geometry is
+  applied once per tet: `G_i = −A⁻ᵀ Σ_x π_i ḡ`.
+- The caller sums the data term and `κ·prior`, then applies the boundary condition to the gradient.
+- Invalid meshes give `+inf` cost and a count of offending tets; the evaluation path does not raise.

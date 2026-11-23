@@ -37,7 +37,8 @@ the `researcher` agent (Fable), which writes to `docs/research/`.
 - `src/tetvox/`: the Python API.
 - `tests/`: `conftest.py` provides a synthetic Kuhn-cube mesh (always available) and real-atlas
   fixtures that skip when absent.
-- `atlases/` and `literature/*.pdf` are local only and gitignored (ADR 0003).
+- `atlases/`, `data/` (meshes from real samseg runs) and `literature/*.pdf` are local only and
+  gitignored (ADR 0003).
 
 ## Documentation protocol (mandatory)
 
@@ -60,7 +61,8 @@ The docs are the project's memory. Do not rediscover what is written there.
 - **Types everywhere.** Python passes `mypy --strict`. Annotate every argument and return value, e.g.
   `def f(x: npt.NDArray[np.float32]) -> None`, and put array shapes in the docstring. Bindings ship
   a committed `.pyi` stub that must stay in sync.
-- **No needless defensive programming.** Validate inputs once at the public Python API boundary.
+- **No needless defensive programming.** Validate inputs once, at the public C++ API boundary
+  (ADR 0004: C++ is a first-class interface). The Python layer does not repeat those checks.
   Internals trust their invariants: no redundant checks, try/except, or fallback paths for states
   that cannot happen.
 - Tidy, small functions; no dead code or commented-out code. C++ follows `.clang-format` (Google,

@@ -8,34 +8,46 @@ Every agent session reads this file first and updates it last. Status: `todo` / 
   env, check script, docs skeleton, ADRs 0001–0003, researcher agent and skills.
 - 2026-11-23 Atlas loader (`TetMesh`, `load_atlas_npz`) and `scripts/inspect_atlas.py`; findings in
   `docs/knowledge/atlas-format.md`.
+- 2026-11-23 Owner review of R2 and the open questions of R1/R2: decisions in ADR 0005, R2 addendum
+  (run-time costs, prior split, curvature policies, float64, channel layout). ADR 0004: C++ is a
+  first-class interface and Python is optional.
+- 2026-11-23 One real samseg run copied to `data/samseg_runs/` (start and final mesh, timings);
+  facts in `docs/knowledge/samseg-runs.md`.
+- 2026-11-23 Owner approved R1's core proposal: ADR 0006 (exact SoS tie-break, k = 14 snapping with
+  int64 tests, K3 row kernel first). Python `out=` convenience confirmed (ADR 0005).
 
 ## In progress
-- doing — Owner review of R1 (`docs/research/R1-watertight-tet-rasterisation.md`, draft
-  2026-11-23). Proposed: Simulation of Simplicity-style tie-break `X + (ε, ε², ε³)`; vertices snapped
-  to 2⁻¹⁴ voxel with exact int64 plane tests (`__int128` in setup); a stateless row-parallel span
-  kernel first, with a walk from the previous owner as the alternative.
-- doing — Owner review of R2 (`docs/research/R2-decoupling-cost-from-rasteriser.md`, draft
-  2026-11-23). Proposed contract: per-voxel `∂L/∂π` with a generic path (rasterise → interpolate →
-  bary VJP) plus a fused C++ `accumulate<Cost>` functor for the samseg data term.
+- (none)
 
 ## Next
-- todo — Owner reviews R1/R2 and turns the conclusions into ADRs (rasterisation rule, number
-  representation, load-balancing strategy, op/API split).
+- todo — Build restructure for ADR 0004: `TETVOX_BUILD_PYTHON` option, exported `tetvox::tetvox`
+  CMake target, `examples/cpp/` consumer built by `scripts/check.sh`, static cudart only for the
+  Python module. Update CLAUDE.md's Layout section when it lands.
+- todo — Split `TetMesh` (ADR 0005): a minimal mesh (positions, tetrahedra, per-vertex values) and
+  a samseg atlas wrapper for the rest (affine, `can_move`, stiffness, prior normaliser, names,
+  colours, labels).
 - todo — CPU reference rasteriser (exact, slow) in the shared headers, used as the test oracle for
   watertightness: every voxel centre in the domain is owned by exactly one tet.
-- todo — First CUDA rasteriser → per-voxel (tet id, π); benchmark on the adult atlas at 256³.
-- todo — Interpolate + VJP ops; optional torch autograd wrapper.
+- todo — First CUDA rasteriser → per-voxel (tet id, π₁..π₃); benchmark on the adult atlas at 256³.
+- todo — Interpolate + VJP ops; `accumulate<Cost>` with the curvature policy parameter (only
+  `None` implemented, R2 addendum A4); optional torch autograd wrapper.
+- todo — Deformation prior as a separate per-tet op on the shared geometry table, including the fold
+  check (R2 addendum A2).
 - todo — CI (lint, mypy, compile-only CUDA build in a CUDA container); prebuilt wheels
   (cibuildwheel) before first release.
 
+## Experiments (benchmarks that settle open choices)
+- Channel layout `(X, Y, Z, K)` vs `(K, X, Y, Z)` for K ∈ {8, 16, 44} (R2 addendum A6).
+- Raster buffer: 3 stored barycentrics (current choice) vs 4 vs `tet_id` only and recompute.
+- float32 vs two-level vs float64 per-tet moments: error against a float64 CPU reference, and time
+  (R2 addendum A5).
+- Tet-parallel vs voxel-parallel accumulation.
+- (R1) Snapping precision k ∈ {8…16}: ownership and cost on the start and final meshes of
+  `data/samseg_runs/`, on positions interpolated between them, and with random jitter.
+- (R1) K3 vs K4: deferred. It needs a real per-evaluation trajectory, which we get for free once
+  tetvox runs inside the owner's rebuilt pipeline. The owner's current POC is being rebuilt and is
+  not to be modified. Existing data suggest K3 is enough (`samseg-runs.md`).
+- (R1) int64 division speed on GPUs other than the dev laptop.
+
 ## Open questions
-- Policy for voxel centres exactly on the outer domain boundary. Half-open leaves the 110,737
-  centres on `x_d = max_d` unowned on the template grid. R1 describes an exact closed-box mode.
-- (R1) Row spans vs walk from the previous owner: needs a replay of a real registration trajectory.
-- (R1) Behaviour on `D ≤ 0` (inverted tets) and on vertices outside the grid window.
-- Meaning of `log_mass_laplace_kappa1` and `mass_laplace_n_free` in the atlases (ask owner).
-- Output grid definition: template grid only, or arbitrary grid via the affine?
-- (R2) Curvature to support: clamped EM bound `diag(r/π)` or exact `r rᵀ`, with or without the
-  indefinite terms. GEMS itself uses no Hessian (L-BFGS).
-- (R2) Real target size: 256³ × K=44, or the template grid × 8 merged classes (samseg merges
-  before deforming)?
+- How far to take curvature after `None` (`GaussNewton` is the cheapest next step, R2 addendum A4).
