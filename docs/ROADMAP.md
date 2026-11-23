@@ -19,14 +19,23 @@ Every agent session reads this file first and updates it last. Status: `todo` / 
   `tetvox::tetvox` package (component `cpp`, kept out of the wheel), `examples/cpp/` consumer built
   and run by `scripts/check.sh`, static cudart only on `_core`, version set only in `project()`.
   The `native` CUDA-arch default now works in plain CMake builds too (`build.md`).
+- 2026-11-23 `TetMesh` split (ADR 0005). `TetMesh` (positions, tetrahedra, `values`) is the
+  generic mesh. `SamsegAtlas` (`samseg.py`) holds a `TetMesh` (composition) plus affine,
+  `can_move`, names, colours, labels and stiffness. Owner decisions: generic name `values` (not
+  `alphas`), `values` required (`(N, 0)` when there is no data), dtypes f32/i32/f32, no checks in
+  the Python constructor, prior-normaliser keys ignored entirely. CLAUDE.md gained the
+  "Decisions and assumptions" rule.
 
 ## In progress
 - (none)
 
 ## Next
-- todo — Split `TetMesh` (ADR 0005): a minimal mesh (positions, tetrahedra, per-vertex values) and
-  a samseg atlas wrapper for the rest (affine, `can_move`, stiffness, prior normaliser, names,
-  colours, labels).
+- todo — Compile-time precision switch (owner request, 2026-11-23): one CMake option selecting a
+  `tetvox::real` type (f32 default, f64 e.g. on an H200), with Python reading the compiled dtype
+  from `_core`. Introduce it with the first kernel; nothing in C++ reads positions or values yet.
+  To decide then: which quantities follow it (positions, values, stored barycentrics, accumulators;
+  ADR 0005 fixes accumulators as mixed f32/f64). Positions hardly matter for ownership: after the
+  2⁻¹⁴ snap (ADR 0006) rasterisation is exact, and f32 already resolves 2⁻¹⁶ below 256.
 - todo — CPU reference rasteriser (exact, slow) in the shared headers, used as the test oracle for
   watertightness: every voxel centre in the domain is owned by exactly one tet.
 - todo — First CUDA rasteriser → per-voxel (tet id, π₁..π₃); benchmark on the adult atlas at 256³.
@@ -53,4 +62,6 @@ Every agent session reads this file first and updates it last. Status: `todo` / 
 - (R1) int64 division speed on GPUs other than the dev laptop.
 
 ## Open questions
+- `TetMesh.values` is required, so a mesh without data uses shape `(N, 0)`. Make it optional if
+  that proves awkward (a small, local change).
 - How far to take curvature after `None` (`GaussNewton` is the cheapest next step, R2 addendum A4).

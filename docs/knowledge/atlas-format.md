@@ -4,22 +4,24 @@ The atlases are local only (`atlases/`, gitignored, see ADR 0003). Regenerate al
 
     python scripts/inspect_atlas.py atlases/adult_template/atlas_adult.npz
 
-Loader: `tetvox.load_atlas_npz(path) -> TetMesh` (`src/tetvox/mesh.py`).
+Loader: `tetvox.load_atlas_npz(path) -> SamsegAtlas` (`src/tetvox/samseg.py`). Geometry and
+priors go into the generic `atlas.mesh: TetMesh` (`src/tetvox/mesh.py`), the rest into the atlas
+record (ADR 0005).
 
 ## Keys (verified 2026-11-23)
 
-| Key | Stored dtype | Shape | `TetMesh` field (canonical dtype) | Meaning |
+| Key | Stored dtype | Shape | `SamsegAtlas` field (canonical dtype) | Meaning |
 |---|---|---|---|---|
-| `positions` | f32 (f64 in `atlas_adult_7_classes`) | (N, 3) | `positions` (f32) | vertex positions, **template voxel coordinates** |
-| `tetrahedra` | i32 | (T, 4) | `tetrahedra` (i32) | vertex indices, 0-based |
-| `alphas` | f32 / f64 | (N, K) | `alphas` (f32) | per-vertex class priors α, rows sum to 1 (err ≤ 1.5e-6), min 0 |
+| `positions` | f32 (f64 in `atlas_adult_7_classes`) | (N, 3) | `mesh.positions` (f32) | vertex positions, **template voxel coordinates** |
+| `tetrahedra` | i32 | (T, 4) | `mesh.tetrahedra` (i32) | vertex indices, 0-based |
+| `alphas` | f32 / f64 | (N, K) | `mesh.values` (f32) | per-vertex class priors α, rows sum to 1 (err ≤ 1.5e-6), min 0 |
 | `affine` | f32 / f64 | (4, 4) | `affine` (f64) | template voxel → world (mm) |
 | `can_move` | bool | (N, 3) | `can_move` | per-axis mobility mask |
 | `names` | `<U..` | (K,) | `names` (tuple[str]) | class names |
 | `colors` | i64 | (K, 4) | `colors` | RGBA |
 | `FreeSurferLabels` | i64 | (L,) | `freesurfer_labels` | FreeSurfer label ids. **L ≠ K in reduced-class atlases** (7-class atlases keep the full 41/44 list) |
 | `K` | f64 | () | `stiffness` | 0.1 in all atlases. Inferred: samseg mesh stiffness κ (`meshStiffness` default 0.1) |
-| `log_mass_laplace_kappa1` | f64 | () | not loaded | only in full-class atlases. Laplace approximation of the deformation prior's cost (log mass) at κ = 1 (owner, 2026-11-23). The POC logs it rescaled to the effective κ as `log Z_u (Laplace)` (100.0 adult, −186309 infant) |
+| `log_mass_laplace_kappa1` | f64 | () | not loaded (owner, 2026-11-23: out of scope) | only in full-class atlases. Laplace approximation of the deformation prior's cost (log mass) at κ = 1 (owner, 2026-11-23). The POC logs it rescaled to the effective κ as `log Z_u (Laplace)` (100.0 adult, −186309 infant) |
 | `mass_laplace_n_free` | i64 | () | not loaded | only in full-class atlases. Number of free coordinates in that Laplace approximation (162454 adult, 101437 infant; not 3·N). Prior-side data, not used by the rasteriser (ADR 0005) |
 
 Canonical dtypes: f32 for geometry and priors, f64 for the affine. Only `atlas_adult_7_classes.npz`

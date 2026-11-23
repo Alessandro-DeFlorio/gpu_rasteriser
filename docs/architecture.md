@@ -20,14 +20,17 @@ its addendum) and the rasterisation rule (ADR 0006) are decided.
    scikit-build, OFF in a plain CMake build). Links cudart statically (ADR 0001). A
    nanobind module `tetvox._core` taking DLPack arrays (`nb::ndarray`), so numpy, torch, cupy and
    others work (ADR 0001).
-3. **Python package** (`src/tetvox/`). Thin: bindings re-exported with types, `TetMesh` and
-   `load_atlas_npz` in `mesh.py`, and an optional torch autograd wrapper later.
+3. **Python package** (`src/tetvox/`). Thin: bindings re-exported with types, the generic
+   `TetMesh` (`mesh.py`, the only mesh type ops take), `SamsegAtlas` and `load_atlas_npz`
+   (`samseg.py`, holding a `TetMesh` plus samseg model data), and an optional torch autograd
+   wrapper later.
 
 ## Data flow (ADR 0005, R2)
 - Inputs are in **voxel index space**. Voxel centres are the integer points of
   `[0,X)×[0,Y)×[0,Z)`. Any affine is applied to the vertices by the caller.
-- Mesh = positions `(N,3)`, tetrahedra `(T,4)`, per-vertex values `(N,C)`. Priors, stiffness and
-  display metadata are not part of it.
+- Mesh (`TetMesh`) = positions `(N,3)` f32, tetrahedra `(T,4)` i32, per-vertex values `(N,C)` f32,
+  where `C = 0` is allowed. Priors, stiffness and display metadata are not part of it; for samseg
+  they live in `SamsegAtlas`, which holds the mesh rather than subclassing it.
 
 ```
 positions, tets ──► per-tet geometry (A⁻¹, v₀, det A) ──► deformation prior (separate op, fold check)

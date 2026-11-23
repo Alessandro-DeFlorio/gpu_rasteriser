@@ -63,27 +63,28 @@ def percentiles(name: str, values: FloatArray) -> str:
 def report(path: Path) -> None:
     with np.load(path) as raw:
         stored = {key: (str(raw[key].dtype), raw[key].shape) for key in raw.files}
-    mesh = load_atlas_npz(path)
-    n_vertices, n_classes = mesh.alphas.shape
+    atlas = load_atlas_npz(path)
+    mesh = atlas.mesh
+    n_vertices, n_classes = mesh.values.shape
     volumes = signed_volumes(mesh)
     abs_volumes = np.abs(volumes)
     edges = max_edge_lengths(mesh)
     lattice = lattice_points_in_bbox(mesh)
     multiplicity = face_multiplicities(mesh)
     on_boundary = boundary_vertices(mesh)
-    fixed = ~mesh.can_move.all(axis=1)
+    fixed = ~atlas.can_move.all(axis=1)
     lo, hi = mesh.positions.min(axis=0), mesh.positions.max(axis=0)
-    voxel_size = np.linalg.norm(mesh.affine[:3, :3], axis=0)
+    voxel_size = np.linalg.norm(atlas.affine[:3, :3], axis=0)
 
     print(f"== {path}")
     for key, (dtype, shape) in stored.items():
         print(f"  stored {key:<26} {dtype:<6} {shape}")
     print(f"  vertices {n_vertices}  tets {len(volumes)}  classes {n_classes}")
     print(f"  bbox (voxels) {lo} .. {hi}   voxel size (mm) {voxel_size.round(4)}")
-    print(f"  stiffness K {mesh.stiffness}")
+    print(f"  stiffness K {atlas.stiffness}")
     print(
-        f"  alphas: max |row sum - 1| {np.abs(mesh.alphas.sum(axis=1) - 1).max():.2e}"
-        f"  min {np.min(mesh.alphas):.2e}"
+        f"  alphas: max |row sum - 1| {np.abs(mesh.values.sum(axis=1) - 1).max():.2e}"
+        f"  min {np.min(mesh.values):.2e}"
     )
     print(
         f"  orientation: {np.sum(volumes > 0)} positive, {np.sum(volumes < 0)} negative,"
@@ -110,8 +111,9 @@ def report(path: Path) -> None:
         f"  boundary vertices on bbox faces: "
         f"{np.mean(((mesh.positions == lo) | (mesh.positions == hi)).any(axis=1)[on_boundary]):.1%}"
     )
-    print(f"  names ({len(mesh.names)}): {', '.join(mesh.names)}")
-    print(f"  FreeSurfer labels ({mesh.freesurfer_labels.size}): {mesh.freesurfer_labels.tolist()}")
+    print(f"  names ({len(atlas.names)}): {', '.join(atlas.names)}")
+    labels = atlas.freesurfer_labels
+    print(f"  FreeSurfer labels ({labels.size}): {labels.tolist()}")
 
 
 if __name__ == "__main__":

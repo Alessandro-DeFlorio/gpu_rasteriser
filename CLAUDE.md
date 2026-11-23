@@ -20,7 +20,7 @@ source ~/miniconda3/etc/profile.d/conda.sh && conda activate tetvox-dev
 conda env create -f environment.yml         # first time only
 pip install --no-build-isolation -ve .      # once; `import tetvox` then rebuilds C++/CUDA automatically
 scripts/check.sh                            # all gates: stub freshness, ruff, mypy --strict, clang-format, C++ example, pytest
-pytest tests/test_mesh.py::test_load_adult_atlas   # a single test
+pytest tests/test_samseg.py::test_load_adult_atlas   # a single test
 python -m nanobind.stubgen -m tetvox._core -o src/tetvox/_core.pyi   # after changing bindings
 python scripts/inspect_atlas.py atlases/adult_template/atlas_adult.npz  # atlas statistics
 ```
@@ -60,6 +60,29 @@ The docs are the project's memory. Do not rediscover what is written there.
   - keep `docs/architecture.md` current when structure changes.
 - Research goes to `docs/research/<id>-*.md` (template `_template.md`, briefs in `briefs/`). Every claim
   is marked verified or inferred, with citations.
+
+## Decisions and assumptions (mandatory)
+
+The owner must know about every choice they have not made explicitly.
+
+- **Before writing code**, list every decision the task needs that the owner's request, an ADR or
+  `docs/` has not settled, and wait for answers. For each give: the choice, the options, your
+  recommendation and why, and what it affects.
+- **What counts:** anything that can change results, numerics, behaviour or the public API. For
+  example: epsilons and tolerances, guards against division by zero, clamping, dtypes and precision
+  (float32/64, fixed-point scale), rounding and tie-breaking, sampling conventions (voxel centre or
+  corner, half-open or closed), coordinate spaces, axis and memory order, default argument values,
+  handling of degenerate or invalid input, and names and placement of public API.
+- **Mid-task:** if a new decision comes up, stop and ask. Never pick silently, even when the choice
+  looks obvious.
+- **Tunable values are never bare literals.** Each is a named constant with a comment giving its
+  origin, and the owner decides whether it is fixed, compile-time (template or constexpr) or a
+  run-time parameter.
+- **Record the answer:** an ADR for design-level choices, `docs/knowledge/` or a code comment for
+  local ones, so it is never asked twice.
+- **Purely internal details** that do not affect any of the above (private helper names, how a
+  file is organised internally) need no prior question; list them in the final report so the owner
+  can still veto them.
 
 ## Code rules
 
