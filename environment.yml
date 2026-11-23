@@ -1,0 +1,18 @@
+# Developer environment. The CUDA toolkit (nvcc) is taken from the system (/usr/local/cuda).
+#   conda env create -f environment.yml && conda activate tetvox-dev
+#   pip install --no-build-isolation -ve .
+name: tetvox-dev
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - numpy
+  - cmake>=3.26
+  - ninja
+  - scikit-build-core>=0.10
+  - nanobind>=2.4
+  - pytest
+  - mypy
+  - ruff
+  - clang-format
+  - pip
