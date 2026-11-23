@@ -1,6 +1,9 @@
 # 0006 — Rasterisation rule, exact arithmetic and first kernel
 
-Status: accepted (2026-11-23)
+Status: accepted (2026-11-23); amended by ADR 0007 (axes named 0, 1, 2 with axis 0 first; snapping
+rounds to nearest, ties to even; the CPU code is a public backend sharing this header) and by ADR
+0008 (no grid-size limit, windows are per tet; window test `span ≤ 2^(k+L)`; k becomes a run-time
+parameter unless compile time proves measurably faster).
 
 Context: `docs/research/R1-watertight-tet-rasterisation.md` (§1–§3, "Impact on design"). Policies on
 the boundary, invalid meshes and the raster buffer are in ADR 0005; this ADR does not repeat them.
@@ -41,6 +44,7 @@ the boundary, invalid meshes and the raster buffer are in ADR 0005; this ADR doe
   with all vertices on voxel centres (maximal ties), and scaled; a rotated placement partly outside
   the grid; GPU owners bit-identical to the CPU reference; `π_j ≥ 0` and `|Σπ − 1| < 1e-6` for owned
   voxels; an adversarial bit-budget test with tets spanning the full window.
-- Grids larger than 1024 voxels per axis need a smaller k, or tiling with a per-tile origin. Not
+- (Superseded by ADR 0008: the origin is per tet, so only per-tet windows matter.) Grids larger
+  than 1024 voxels per axis need a smaller k, or tiling with a per-tile origin. Not
   needed for 256³.
 - k = 14 still needs confirming on a real registration (experiment in ROADMAP).

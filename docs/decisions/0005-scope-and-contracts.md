@@ -1,6 +1,8 @@
 # 0005 — Scope, mesh contents and op contracts (owner answers to the R1/R2 open questions)
 
-Status: accepted (2026-11-23)
+Status: accepted (2026-11-23); amended by ADR 0007 and ADR 0008 (stored π and mesh
+positions/values are float32 or float64, following the caller's dtype at run time, not fixed
+float32).
 
 Context: `docs/research/R1-watertight-tet-rasterisation.md` and
 `docs/research/R2-decoupling-cost-from-rasteriser.md` (including its addendum). This ADR records the
