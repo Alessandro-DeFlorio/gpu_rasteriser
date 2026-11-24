@@ -1,13 +1,16 @@
-// tetvox._core: the nanobind module (ADR 0001, 0009). One overload per dtype (and, later, backend);
-// nanobind overload resolution dispatches on dtype and device. Arrays are never converted or copied
-// (noconvert): a wrong dtype, layout or device is a TypeError (ADR 0008). The binding checks that
-// array shapes agree; everything else is validated by the C++ ops.
+// tetvox._core: the nanobind module (ADR 0001, 0009, 0010). One overload per dtype (and, later,
+// backend); nanobind overload resolution dispatches on dtype, device and number of array
+// dimensions. Arrays are never converted or copied (noconvert): a wrong dtype, layout, device or
+// ndim is a TypeError (ADR 0008). Each binding reads the simplex dimension D from the array shapes,
+// calls the matching instantiation and checks that the shapes agree with D (ValueError otherwise);
+// everything else is validated by the C++ ops.
 //
-// A TetSetup crosses the boundary as its seven arrays, in field order (ADR 0009).
+// A SimplexSetup crosses the boundary as its seven arrays, in field order (ADR 0009).
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
 #include <nanobind/stl/tuple.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <stdexcept>
 #include <tuple>
@@ -21,27 +24,25 @@ namespace nb = nanobind;
 
 namespace {
 
-template <class V, ssize_t... Dims>
-using CpuArray = nb::ndarray<V, nb::shape<Dims...>, nb::c_contig, nb::device::cpu>;
+template <class V, std::size_t N>
+using CpuArray = nb::ndarray<V, nb::ndim<N>, nb::c_contig, nb::device::cpu>;
+// A grid of any dimension; its ndim is checked against D.
+template <class V>
+using CpuGrid = nb::ndarray<V, nb::c_contig, nb::device::cpu>;
 
-// TetSetup fields; C is const for the consumers, which only read the record.
+// SimplexSetup fields; C is const for the consumers, which only read the record.
 template <class C>
-using Normals = CpuArray<C, -1, 4, 3>;
+using Normals = CpuArray<C, 3>;  // (T, D + 1, D)
 template <class C>
-using Offsets = CpuArray<C, -1, 4>;
+using Offsets = CpuArray<C, 2>;  // (T, D + 1)
 template <class C>
-using Fractions = CpuArray<C, -1, 4>;
+using Fractions = CpuArray<C, 2>;  // (T, D + 1)
 template <class C>
-using BaryScale = CpuArray<C, -1>;
+using BaryScale = CpuArray<C, 1>;  // (T,)
 template <class C>
-using Box = CpuArray<C, -1, 3>;
+using Box = CpuArray<C, 2>;  // (T, D)
 template <class C>
-using Status = CpuArray<C, -1>;
-
-template <class C>
-using Grid = CpuArray<C, -1, -1, -1>;
-template <class C>
-using GridVec3 = CpuArray<C, -1, -1, -1, 3>;
+using Status = CpuArray<C, 1>;  // (T,)
 
 void require(bool condition, const char* message) {
   if (!condition) {
@@ -49,17 +50,35 @@ void require(bool condition, const char* message) {
   }
 }
 
-// The view on a TetSetup, after checking that its arrays agree on the number of tets.
-template <class T, class I64, class R, class U8>
-tetvox::TetSetupView<T> make_view(const Normals<I64>& normals, const Offsets<I64>& offsets,
-                                  const Fractions<R>& fractions, const BaryScale<R>& bary_scale,
-                                  const Box<I64>& box_lo, const Box<I64>& box_hi,
-                                  const Status<U8>& status) {
+// Calls f.template operator()<D>() with the compile-time D equal to dim.
+template <std::size_t D = 1, class F>
+void with_dim(std::size_t dim, F&& f) {
+  if constexpr (D <= tetvox::max_dim) {
+    if (dim == D) {
+      f.template operator()<D>();
+      return;
+    }
+    with_dim<D + 1>(dim, std::forward<F>(f));
+  } else {
+    throw std::invalid_argument("the simplex dimension D must be 1, 2 or 3");
+  }
+}
+
+// The view on a SimplexSetup, after checking that its arrays agree on the number of simplices and
+// on D.
+template <class T, std::size_t D, class I64, class R, class U8>
+tetvox::SimplexSetupView<T, D> make_view(const Normals<I64>& normals, const Offsets<I64>& offsets,
+                                         const Fractions<R>& fractions,
+                                         const BaryScale<R>& bary_scale, const Box<I64>& box_lo,
+                                         const Box<I64>& box_hi, const Status<U8>& status) {
   const size_t n = status.shape(0);
   require(normals.shape(0) == n && offsets.shape(0) == n && fractions.shape(0) == n &&
               bary_scale.shape(0) == n && box_lo.shape(0) == n && box_hi.shape(0) == n,
-          "the TetSetup arrays disagree on the number of tets");
-  return tetvox::TetSetupView<T>{
+          "the SimplexSetup arrays disagree on the number of simplices");
+  require(normals.shape(1) == D + 1 && normals.shape(2) == D && offsets.shape(1) == D + 1 &&
+              fractions.shape(1) == D + 1 && box_lo.shape(1) == D && box_hi.shape(1) == D,
+          "the SimplexSetup arrays disagree on the dimension D");
+  return tetvox::SimplexSetupView<T, D>{
       static_cast<int64_t>(n),
       const_cast<int64_t*>(normals.data()),
       const_cast<int64_t*>(offsets.data()),
@@ -67,21 +86,29 @@ tetvox::TetSetupView<T> make_view(const Normals<I64>& normals, const Offsets<I64
       const_cast<T*>(bary_scale.data()),
       const_cast<int64_t*>(box_lo.data()),
       const_cast<int64_t*>(box_hi.data()),
-      reinterpret_cast<tetvox::TetStatus*>(const_cast<uint8_t*>(status.data())),
+      reinterpret_cast<tetvox::SimplexStatus*>(const_cast<uint8_t*>(status.data())),
   };
 }
 
-template <class A>
-tetvox::GridShape grid_shape(const A& grid) {
-  return {static_cast<int64_t>(grid.shape(0)), static_cast<int64_t>(grid.shape(1)),
-          static_cast<int64_t>(grid.shape(2))};
+// The grid shape of a D-dimensional grid array.
+template <std::size_t D, class A>
+tetvox::GridShape<D> grid_shape(const A& grid, const char* name) {
+  require(grid.ndim() == D, name);
+  tetvox::GridShape<D> shape{};
+  for (std::size_t d = 0; d < D; ++d) {
+    shape[d] = static_cast<int64_t>(grid.shape(d));
+  }
+  return shape;
 }
 
-template <class A, class B>
-void require_same_grid(const A& tet_id, const B& bary) {
-  require(tet_id.shape(0) == bary.shape(0) && tet_id.shape(1) == bary.shape(1) &&
-              tet_id.shape(2) == bary.shape(2),
-          "tet_id and bary disagree on the grid shape");
+// bary must have the shape (*grid, D).
+template <std::size_t D, class B>
+void require_bary_shape(const tetvox::GridShape<D>& grid, const B& bary) {
+  bool same = bary.ndim() == D + 1 && bary.shape(D) == D;
+  for (std::size_t d = 0; same && d < D; ++d) {
+    same = static_cast<int64_t>(bary.shape(d)) == grid[d];
+  }
+  require(same, "bary must have the shape (*simplex_id.shape, D)");
 }
 
 auto setup_args() {
@@ -91,7 +118,7 @@ auto setup_args() {
                          nb::arg("status").noconvert());
 }
 
-// m.def with `before`, the seven TetSetup arguments, then `after`; the GIL is released.
+// m.def with `before`, the seven SimplexSetup arguments, then `after`; the GIL is released.
 template <class F, class... Before, class... After>
 void def_op(nb::module_& m, const char* name, F f, std::tuple<Before...> before,
             std::tuple<After...> after) {
@@ -100,6 +127,8 @@ void def_op(nb::module_& m, const char* name, F f, std::tuple<Before...> before,
       std::tuple_cat(std::move(before), setup_args(), std::move(after)));
 }
 
+constexpr const char* grid_ndim_message = "the grid array must have D dimensions";
+
 template <class T>
 void bind_cpu(nb::module_& m) {
   using I64 = const int64_t;
@@ -107,20 +136,24 @@ void bind_cpu(nb::module_& m) {
   using U8 = const uint8_t;
 
   def_op(
-      m, "setup_tets",
-      [](CpuArray<const T, -1, 3> positions, CpuArray<const int32_t, -1, 4> tetrahedra,
-         int snap_bits, Normals<int64_t> normals, Offsets<int64_t> offsets, Fractions<T> fractions,
+      m, "setup_simplices",
+      [](CpuArray<const T, 2> positions, CpuArray<const int32_t, 2> simplices, int snap_bits,
+         Normals<int64_t> normals, Offsets<int64_t> offsets, Fractions<T> fractions,
          BaryScale<T> bary_scale, Box<int64_t> box_lo, Box<int64_t> box_hi,
          Status<uint8_t> status) {
-        const auto out =
-            make_view<T>(normals, offsets, fractions, bary_scale, box_lo, box_hi, status);
-        require(out.num_tets == static_cast<int64_t>(tetrahedra.shape(0)),
-                "the TetSetup arrays and tetrahedra disagree on the number of tets");
-        const tetvox::MeshView<T> mesh{positions.data(), tetrahedra.data(),
-                                       static_cast<int64_t>(positions.shape(0)), out.num_tets};
-        tetvox::cpu::setup_tets(mesh, snap_bits, out);
+        with_dim(positions.shape(1), [&]<std::size_t D>() {
+          require(simplices.shape(1) == D + 1, "simplices must have D + 1 columns");
+          const auto out =
+              make_view<T, D>(normals, offsets, fractions, bary_scale, box_lo, box_hi, status);
+          require(out.num_simplices == static_cast<int64_t>(simplices.shape(0)),
+                  "the SimplexSetup arrays and simplices disagree on the number of simplices");
+          const tetvox::MeshView<T, D> mesh{positions.data(), simplices.data(),
+                                            static_cast<int64_t>(positions.shape(0)),
+                                            out.num_simplices};
+          tetvox::cpu::setup_simplices(mesh, snap_bits, out);
+        });
       },
-      std::make_tuple(nb::arg("positions").noconvert(), nb::arg("tetrahedra").noconvert(),
+      std::make_tuple(nb::arg("positions").noconvert(), nb::arg("simplices").noconvert(),
                       nb::arg("snap_bits")),
       std::tuple<>{});
 
@@ -128,45 +161,57 @@ void bind_cpu(nb::module_& m) {
       m, "locate",
       [](Normals<I64> normals, Offsets<I64> offsets, Fractions<R> fractions,
          BaryScale<R> bary_scale, Box<I64> box_lo, Box<I64> box_hi, Status<U8> status,
-         Grid<int32_t> tet_id) {
-        const auto s =
-            make_view<T>(normals, offsets, fractions, bary_scale, box_lo, box_hi, status);
-        tetvox::cpu::locate(s, grid_shape(tet_id), tet_id.data());
+         CpuGrid<int32_t> simplex_id) {
+        with_dim(box_lo.shape(1), [&]<std::size_t D>() {
+          const auto s =
+              make_view<T, D>(normals, offsets, fractions, bary_scale, box_lo, box_hi, status);
+          tetvox::cpu::locate(s, grid_shape<D>(simplex_id, grid_ndim_message), simplex_id.data());
+        });
       },
-      std::tuple<>{}, std::make_tuple(nb::arg("tet_id").noconvert()));
+      std::tuple<>{}, std::make_tuple(nb::arg("simplex_id").noconvert()));
 
   def_op(
       m, "barycentrics",
       [](Normals<I64> normals, Offsets<I64> offsets, Fractions<R> fractions,
          BaryScale<R> bary_scale, Box<I64> box_lo, Box<I64> box_hi, Status<U8> status,
-         Grid<const int32_t> tet_id, GridVec3<T> bary) {
-        const auto s =
-            make_view<T>(normals, offsets, fractions, bary_scale, box_lo, box_hi, status);
-        require_same_grid(tet_id, bary);
-        tetvox::cpu::barycentrics(s, grid_shape(tet_id), tet_id.data(), bary.data());
+         CpuGrid<const int32_t> simplex_id, CpuGrid<T> bary) {
+        with_dim(box_lo.shape(1), [&]<std::size_t D>() {
+          const auto s =
+              make_view<T, D>(normals, offsets, fractions, bary_scale, box_lo, box_hi, status);
+          const auto shape = grid_shape<D>(simplex_id, grid_ndim_message);
+          require_bary_shape(shape, bary);
+          tetvox::cpu::barycentrics(s, shape, simplex_id.data(), bary.data());
+        });
       },
-      std::tuple<>{}, std::make_tuple(nb::arg("tet_id").noconvert(), nb::arg("bary").noconvert()));
+      std::tuple<>{},
+      std::make_tuple(nb::arg("simplex_id").noconvert(), nb::arg("bary").noconvert()));
 
   def_op(
       m, "rasterize",
       [](Normals<I64> normals, Offsets<I64> offsets, Fractions<R> fractions,
          BaryScale<R> bary_scale, Box<I64> box_lo, Box<I64> box_hi, Status<U8> status,
-         Grid<int32_t> tet_id, GridVec3<T> bary) {
-        const auto s =
-            make_view<T>(normals, offsets, fractions, bary_scale, box_lo, box_hi, status);
-        require_same_grid(tet_id, bary);
-        tetvox::cpu::rasterize(s, grid_shape(tet_id), tet_id.data(), bary.data());
+         CpuGrid<int32_t> simplex_id, CpuGrid<T> bary) {
+        with_dim(box_lo.shape(1), [&]<std::size_t D>() {
+          const auto s =
+              make_view<T, D>(normals, offsets, fractions, bary_scale, box_lo, box_hi, status);
+          const auto shape = grid_shape<D>(simplex_id, grid_ndim_message);
+          require_bary_shape(shape, bary);
+          tetvox::cpu::rasterize(s, shape, simplex_id.data(), bary.data());
+        });
       },
-      std::tuple<>{}, std::make_tuple(nb::arg("tet_id").noconvert(), nb::arg("bary").noconvert()));
+      std::tuple<>{},
+      std::make_tuple(nb::arg("simplex_id").noconvert(), nb::arg("bary").noconvert()));
 
   def_op(
       m, "count_claims",
       [](Normals<I64> normals, Offsets<I64> offsets, Fractions<R> fractions,
          BaryScale<R> bary_scale, Box<I64> box_lo, Box<I64> box_hi, Status<U8> status,
-         Grid<int32_t> claims) {
-        const auto s =
-            make_view<T>(normals, offsets, fractions, bary_scale, box_lo, box_hi, status);
-        tetvox::cpu::count_claims(s, grid_shape(claims), claims.data());
+         CpuGrid<int32_t> claims) {
+        with_dim(box_lo.shape(1), [&]<std::size_t D>() {
+          const auto s =
+              make_view<T, D>(normals, offsets, fractions, bary_scale, box_lo, box_hi, status);
+          tetvox::cpu::count_claims(s, grid_shape<D>(claims, grid_ndim_message), claims.data());
+        });
       },
       std::tuple<>{}, std::make_tuple(nb::arg("claims").noconvert()));
 }
@@ -183,9 +228,9 @@ NB_MODULE(_core, m) {
   m.def(
       "count_skipped",
       [](Status<const uint8_t> status) {
-        const tetvox::SkippedTets s =
-            tetvox::cpu::count_skipped(reinterpret_cast<const tetvox::TetStatus*>(status.data()),
-                                       static_cast<int64_t>(status.shape(0)));
+        const tetvox::SkippedSimplices s = tetvox::cpu::count_skipped(
+            reinterpret_cast<const tetvox::SimplexStatus*>(status.data()),
+            static_cast<int64_t>(status.shape(0)));
         return std::make_tuple(s.inverted, s.outside_window);
       },
       nb::arg("status").noconvert(), nb::call_guard<nb::gil_scoped_release>());

@@ -68,20 +68,44 @@ Every agent session reads this file first and updates it last. Status: `todo` / 
   `rasteriser-cpu.md`. Not done: allocation of outputs for torch inputs (torch is not in
   `tetvox-dev`; numpy only, other frameworks pass `out=`).
 
+- 2026-11-24 Research R3 (dimension-generic rasteriser: generic code is bit-identical to the 3D
+  header and as fast on CPU and GPU; 4D needs `__int128` per sample) and R4 (nvdiffrast: no code can
+  be copied under its licence; ranked ideas for the CUDA backend). Owner decisions on both decision
+  lists in ADR 0010: 1D, 2D and 3D public with one interface, capped at 3; neutral `simplex` names
+  with no aliases; `template <Real T, std::size_t D>`; fixed int64/`__int128` (no CMake option);
+  proven bit budget; rows along the last axis; the K3 launcher stays open until the CUDA item
+  benchmarks the candidates.
+- 2026-11-24 Dimension-generic header and CPU backend (ADR 0010), branch `dim-generic`: every
+  procedure and op written once for D ∈ {1, 2, 3}, renamed (`setup_simplices`, `SimplexSetup`,
+  `simplex_id`, `SimplexMesh`, …), rows along the last axis, `row_span` and the face-normal helpers
+  force-inlined. 3D outputs on the adult atlas are bit-identical to the previous code (both dtypes);
+  host and device agree for D = 1, 2, 3 (scratch nvcc check). `rasterize` about 9 % faster, setup
+  within noise, `count_claims` 2–3 % slower (`rasteriser-cpu.md`). Tests parametrised over D,
+  including exhaustive exactly-once on jittered 1D/2D/3D Kuhn grids and the bit-budget boundaries
+  per D; the C++ example rasterises a Kuhn cube in 1D, 2D and 3D in both build configurations.
+
 ## In progress
 - (none)
 
 ## Next
-- todo — First CUDA backend for ops 1–6 of ADR 0009 (K3 for `locate`/`rasterize`, stream as the
-  last parameter, row offsets via `cudaMallocAsync`; settle Python stream handling), bit-identical
-  to the CPU backend; benchmark on the adult atlas at 256³. Extend `examples/cpp/` to run it on the
-  Kuhn cube too (ADR 0004).
-- todo — `interpolate`, `interpolate_vjp_values`, `interpolate_vjp_bary`, `tet_moments`,
-  `vertex_grad` (ADR 0009 ops 7–11); `accumulate<Cost>` on `setup` + shape with the curvature policy
-  parameter (only `None` implemented, R2 addendum A4); optional torch autograd wrapper (forward
-  `setup_tets` + `rasterize`, backward `tet_moments` + `vertex_grad`).
-- todo — Deformation prior as a separate per-tet op, including the fold check (R2 addendum A2).
-  Decide whether it reads the snapped geometry of `TetSetup` (ADR 0009).
+- todo — First CUDA backend for ops 1–6 (ADR 0009, 0010), for D = 1, 2, 3, stream as the last
+  parameter, bit-identical to the CPU backend; settle Python stream handling. Build the K3 launcher
+  candidates side by side and benchmark them (ADR 0010 D1: readback + one thread per row; persistent
+  blocks over row chunks with a device counter; persistent blocks over simplex batches with a
+  block-local scan), on the adult atlas at its template grid and at 256³ and on 2D meshes, then
+  record the winner in an ADR. Try the division-free empty-row reject in `row_span` (D2; keep it if
+  the CPU does not slow down). Chunk size and threads per block as named compile-time constants,
+  blocks from the occupancy query, tests with two chunk sizes (D4). Extend `examples/cpp/` to run
+  it on the Kuhn cubes too (ADR 0004).
+- todo — `interpolate`, `interpolate_vjp_values`, `interpolate_vjp_bary`, `simplex_moments`,
+  `vertex_grad` (ADR 0009 ops 7–11, generic in D per ADR 0010); `accumulate<Cost>` on `setup` +
+  shape with the curvature policy parameter (only `None` implemented, R2 addendum A4); optional
+  torch autograd wrapper (forward `setup_simplices` + `rasterize`, backward `simplex_moments` +
+  `vertex_grad`). Scatters combine atomics per (warp, simplex) first, then per block is measured
+  (ADR 0010 D3); zero-gradient early exit (R4).
+- todo — Deformation prior as a separate per-tet op (3D only until analysed, ADR 0010), including
+  the fold check (R2 addendum A2). Decide whether it reads the snapped geometry of `SimplexSetup`
+  (ADR 0009).
 - todo — CI (lint, mypy, compile-only CUDA build in a CUDA container); prebuilt wheels
   (cibuildwheel) before first release.
 
@@ -100,23 +124,26 @@ Every agent session reads this file first and updates it last. Status: `todo` / 
 - (R1) int64 division speed on GPUs other than the dev laptop.
 
 ## Open questions
-- `TetMesh.values` is required, so a mesh without data uses shape `(N, 0)`. Make it optional if
+- `SimplexMesh.values` is required, so a mesh without data uses shape `(N, 0)`. Make it optional if
   that proves awkward (a small, local change).
 - How far to take curvature after `None` (`GaussNewton` is the cheapest next step, R2 addendum A4).
 - Run-time vs compile-time k (ADR 0008): the CPU benchmark shows no difference in the parallel
-  `setup_tets` op (`rasteriser-cpu.md`); run time is kept. Owner to confirm.
+  setup op (`rasteriser-cpu.md`); run time is kept. Owner to confirm.
 - Torch: add torch to `tetvox-dev` (or a CI job) so the torch allocation path of the Python ops can
   be built and tested (ADR 0009 says numpy and torch).
-- Row direction for K3: rows run along axis 0, while memory has axis 2 fastest (ADR 0007/0009).
-  Measure rows along axis 2 before the CUDA kernel (`rasteriser-cpu.md`).
+- CLAUDE.md still describes tetvox as a voxeliser "for tetrahedral meshes"; ADR 0010 makes it
+  1D–3D. Owner to update the wording if wanted (README and package metadata are updated).
+- R3's tight bit budget (`2k + 3L ≤ 61` in 3D) needs a full proof before use; the proven bound is
+  kept (ADR 0010).
 - Deferred to the prototype (owner, 2026-11-24). Each is built provisionally as noted and must be
   confirmed or changed:
   1. `TETVOX_ENABLE_CUDA=ON` without a CUDA compiler: provisionally CMake's own configure error
      (recommended; a silent CPU-only fallback is the alternative).
-  2. `barycentrics` and the caller's `tet_id`: is a value outside `[−1, T)`, one naming a skipped
-     tet, or one whose tet's box does not contain the voxel checked (pre-pass, `invalid_argument`;
-     recommended, and built that way) or a documented precondition? The box condition was added
-     while building: without it a wrong id can overflow int64 in `plane_values`.
+  2. `barycentrics` and the caller's `simplex_id`: is a value outside `[−1, T)`, one naming a
+     skipped simplex, or one whose box does not contain the voxel checked (pre-pass,
+     `invalid_argument`; recommended, and built that way) or a documented precondition? The box
+     condition was added while building: without it a wrong id can overflow int64 in
+     `plane_values`.
   3. torch tensors with `requires_grad=True` passed to plain ops: provisionally they fail in the
      DLPack export (recommended; the alternative is a silent detach in the wrapper).
   4. Settled 2026-11-24: `f_j ∈ [0, 1]` (ADR 0008 is right; ADR 0009's table corrected). Exact in

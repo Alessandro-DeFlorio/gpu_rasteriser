@@ -1,17 +1,18 @@
-// CPU backend of the rasterisation ops (ADR 0007, 0009).
+// CPU backend of the rasterisation ops (ADR 0007, 0009, 0010).
 //
 // The loop structure follows meshing_cxx, the earlier CPU rasteriser by Koen Van Leemput and
 // Alessandro De Florio, used here under MIT with their permission
-// (docs/knowledge/meshing-cxx-reference.md): OpenMP over tets, each scanning its grid-clipped
+// (docs/knowledge/meshing-cxx-reference.md): OpenMP over simplices, each scanning its grid-clipped
 // bounding box. Departures from it:
 //   - snapping rounds to nearest with ties to even at scale 2^k (it truncates toward zero at 10^4);
 //   - the tie-break puts axis 0 first (it scans axis 2 first);
 //   - the per-voxel test is int64 with the tie-break folded into c_j, after an __int128 setup and a
-//     per-tet window check (it can overflow int64 silently);
+//     per-simplex window check (it can overflow int64 silently);
 //   - π comes from the snapped integers (it recomputes π in double from the unsnapped vertices);
-//   - each box row is solved in closed form by row_span;
-//   - inverted, degenerate and out-of-window tets are classified and reported (it skips D < 0
-//     silently and rasterises D = 0).
+//   - each box row, along the last axis, is solved in closed form by row_span;
+//   - inverted, degenerate and out-of-window simplices are classified and reported (it skips D < 0
+//     silently and rasterises D = 0);
+//   - every op is written once for any dimension D (it is 3D only).
 #include "tetvox/cpu.hpp"
 
 #include <atomic>
@@ -23,10 +24,11 @@
 namespace tetvox::cpu {
 namespace {
 
-// Tets per OpenMP work item. Box sizes vary widely, so tets are handed out dynamically.
-constexpr int tet_chunk = 64;
+// Simplices per OpenMP work item. Box sizes vary widely, so simplices are handed out dynamically.
+constexpr int simplex_chunk = 64;
 
-void check_shape(GridShape shape) {
+template <std::size_t D>
+void check_shape(const GridShape<D>& shape) {
   for (const int64_t extent : shape) {
     if (extent < 0) {
       throw std::invalid_argument("grid shape has a negative extent");
@@ -34,10 +36,38 @@ void check_shape(GridShape shape) {
   }
 }
 
-int64_t num_voxels(GridShape shape) { return shape[0] * shape[1] * shape[2]; }
+// The number of rows of the grid: the product of the extents of axes 0 … D−2 (1 in 1D).
+template <std::size_t D>
+int64_t num_rows(const GridShape<D>& shape) {
+  int64_t rows = 1;
+  for (std::size_t d = 0; d + 1 < D; ++d) {
+    rows *= shape[d];
+  }
+  return rows;
+}
 
-int64_t voxel_index(GridShape shape, int64_t i0, int64_t i1, int64_t i2) {
-  return (i0 * shape[1] + i1) * shape[2] + i2;
+template <std::size_t D>
+int64_t num_voxels(const GridShape<D>& shape) {
+  return num_rows(shape) * shape[D - 1];
+}
+
+// The C-order element index of voxel x.
+template <std::size_t D>
+inline int64_t voxel_index(const GridShape<D>& shape, const int64_t (&x)[D]) {
+  int64_t index = x[0];
+  for (std::size_t d = 1; d < D; ++d) {
+    index = index * shape[d] + x[d];
+  }
+  return index;
+}
+
+// x[0 … D−2] of grid row r, rows numbered in C order.
+template <std::size_t D>
+inline void row_indices(const GridShape<D>& shape, int64_t r, int64_t (&x)[D]) {
+  for (std::size_t d = D - 1; d-- > 0;) {
+    x[d] = r % shape[d];
+    r /= shape[d];
+  }
 }
 
 template <class V>
@@ -51,231 +81,254 @@ void fill(V* data, int64_t n, V value) {
 // Concurrent writers only meet where the mesh is not a tiling; the result is then unspecified, but
 // relaxed atomics keep it free of data races (ADR 0008).
 template <class V>
-void store_relaxed(V& target, V value) {
+inline void store_relaxed(V& target, V value) {
   std::atomic_ref<V>(target).store(value, std::memory_order_relaxed);
 }
 
-// The tet's box clipped to the grid, inclusive bounds (empty on an axis when lo > hi).
+// The simplex's box clipped to the grid, inclusive bounds (empty on an axis when lo > hi).
+template <std::size_t D>
 struct Box {
-  int64_t lo[3];
-  int64_t hi[3];
+  int64_t lo[D];
+  int64_t hi[D];
 };
 
-template <Real T>
-Box clipped_box(const TetRecord<T>& rec, GridShape shape) {
-  Box box{};
-  for (int d = 0; d < 3; ++d) {
+template <Real T, std::size_t D>
+inline Box<D> clipped_box(const SimplexRecord<T, D>& rec, const GridShape<D>& shape) {
+  Box<D> box{};
+  for (std::size_t d = 0; d < D; ++d) {
     box.lo[d] = detail::max64(rec.box_lo[d], 0);
     box.hi[d] = detail::min64(rec.box_hi[d], shape[d] - 1);
   }
   return box;
 }
 
-// Calls visit(x, index) for every voxel centre x the (ok) tet owns, one box row at a time.
-template <Real T, class Visit>
-void for_each_owned(const TetRecord<T>& rec, GridShape shape, Visit&& visit) {
-  const Box box = clipped_box(rec, shape);
-  for (int64_t i1 = box.lo[1]; i1 <= box.hi[1]; ++i1) {
-    for (int64_t i2 = box.lo[2]; i2 <= box.hi[2]; ++i2) {
-      const RowSpan span = row_span(rec, i1, i2, shape[0]);
-      for (int64_t i0 = span.first; i0 <= span.last; ++i0) {
-        const int64_t x[3] = {i0, i1, i2};
-        visit(x, voxel_index(shape, i0, i1, i2));
-      }
+// Calls body(i_0, …, i_{Axes−1}) for every index tuple of the box on axes 0 … Axes−1, in C order.
+// Each level owns its loop variable and passes the indices on as values, which keeps them in
+// registers (R3 §4.3).
+template <std::size_t Axes, std::size_t D, class Body, class... Is>
+inline void for_each_in_box(const Box<D>& box, const Body& body, Is... is) {
+  constexpr std::size_t axis = sizeof...(Is);
+  if constexpr (axis == Axes) {
+    body(is...);
+  } else {
+    for (int64_t i = box.lo[axis]; i <= box.hi[axis]; ++i) {
+      for_each_in_box<Axes>(box, body, is..., i);
     }
   }
 }
 
-// Provisional check of a caller's tet_id (ROADMAP open question): −1, or an ok tet whose box holds
-// the voxel, so that plane_values stays inside the int64 budget.
-template <Real T>
-bool valid_tet_id(const TetSetupView<T>& s, int32_t t, const int64_t (&x)[3]) {
+// Calls visit(x, index) for every voxel centre x the (ok) simplex owns, one box row at a time.
+template <Real T, std::size_t D, class Visit>
+inline void for_each_owned(const SimplexRecord<T, D>& rec, const GridShape<D>& shape,
+                           const Visit& visit) {
+  const Box<D> box = clipped_box(rec, shape);
+  for_each_in_box<D - 1>(box, [&](auto... lead) {
+    const int64_t row[D] = {lead..., 0};
+    const RowSpan span = row_span(rec, row, shape[D - 1]);
+    const int64_t row_start = voxel_index(shape, row);
+    for (int64_t i = span.first; i <= span.last; ++i) {
+      const int64_t x[D] = {lead..., i};
+      visit(x, row_start + i);
+    }
+  });
+}
+
+// Provisional check of a caller's simplex_id (ROADMAP open question): −1, or an ok simplex whose
+// box holds the voxel, so that plane_values stays inside the int64 budget.
+template <Real T, std::size_t D>
+bool valid_simplex_id(const SimplexSetupView<T, D>& s, int32_t t, const int64_t (&x)[D]) {
   if (t == -1) {
     return true;
   }
-  if (t < 0 || t >= s.num_tets || s.status[t] != TetStatus::ok) {
+  if (t < 0 || t >= s.num_simplices || s.status[t] != SimplexStatus::ok) {
     return false;
   }
-  for (int d = 0; d < 3; ++d) {
-    if (x[d] < s.box_lo[t * 3 + d] || x[d] > s.box_hi[t * 3 + d]) {
+  for (std::size_t d = 0; d < D; ++d) {
+    const int64_t i = t * static_cast<int64_t>(D) + static_cast<int64_t>(d);
+    if (x[d] < s.box_lo[i] || x[d] > s.box_hi[i]) {
       return false;
     }
   }
   return true;
 }
 
-template <Real T>
-void store_barycentrics(const TetRecord<T>& rec, const int64_t (&x)[3], T* bary) {
-  const Barycentrics<T> b = barycentric(rec, plane_values(rec, x));
-  for (int j = 1; j < 4; ++j) {
+template <Real T, std::size_t D>
+inline void store_barycentrics(const SimplexRecord<T, D>& rec, const int64_t (&x)[D], T* bary) {
+  const Barycentrics<T, D> b = barycentric(rec, plane_values(rec, x));
+  for (std::size_t j = 1; j <= D; ++j) {
     store_relaxed(bary[j - 1], b.pi[j]);
   }
 }
 
 }  // namespace
 
-template <Real T>
-void setup_tets(const MeshView<T>& mesh, int snap_bits, const TetSetupView<T>& out) {
+template <Real T, std::size_t D>
+void setup_simplices(const MeshView<T, D>& mesh, int snap_bits, const SimplexSetupView<T, D>& out) {
   if (snap_bits < 0 || snap_bits > max_snap_bits) {
     throw std::invalid_argument("snap_bits must lie in [0, 24]");
   }
   if (mesh.num_vertices < 0) {
     throw std::invalid_argument("num_vertices is negative");
   }
-  if (!(0 <= mesh.num_tets && mesh.num_tets <= INT32_MAX)) {
-    throw std::invalid_argument("num_tets must lie in [0, 2^31 - 1]");
+  if (!(0 <= mesh.num_simplices && mesh.num_simplices <= INT32_MAX)) {
+    throw std::invalid_argument("num_simplices must lie in [0, 2^31 - 1]");
   }
+  constexpr int64_t corners = D + 1;
   int64_t bad_indices = 0;
 #pragma omp parallel for schedule(static) reduction(+ : bad_indices)
-  for (int64_t i = 0; i < mesh.num_tets * 4; ++i) {
-    const int32_t v = mesh.tetrahedra[i];
+  for (int64_t i = 0; i < mesh.num_simplices * corners; ++i) {
+    const int32_t v = mesh.simplices[i];
     bad_indices += (v < 0 || v >= mesh.num_vertices) ? 1 : 0;
   }
   if (bad_indices != 0) {
-    throw std::invalid_argument("a tet index lies outside [0, num_vertices)");
+    throw std::invalid_argument("a simplex index lies outside [0, num_vertices)");
   }
 
 #pragma omp parallel for schedule(static)
-  for (int64_t t = 0; t < mesh.num_tets; ++t) {
-    double p[4][3];
+  for (int64_t t = 0; t < mesh.num_simplices; ++t) {
+    double p[D + 1][D];
     bool in_range = true;
-    for (int v = 0; v < 4; ++v) {
-      const int64_t vertex = mesh.tetrahedra[t * 4 + v];
-      for (int d = 0; d < 3; ++d) {
-        p[v][d] = static_cast<double>(mesh.positions[vertex * 3 + d]);
+    for (std::size_t v = 0; v <= D; ++v) {
+      const int64_t vertex = mesh.simplices[t * corners + static_cast<int64_t>(v)];
+      for (std::size_t d = 0; d < D; ++d) {
+        p[v][d] = static_cast<double>(
+            mesh.positions[vertex * static_cast<int64_t>(D) + static_cast<int64_t>(d)]);
         in_range = in_range && in_snap_range(p[v][d], snap_bits);
       }
     }
     if (!in_range) {
-      out.status[t] = TetStatus::outside_window;
+      out.status[t] = SimplexStatus::outside_window;
       continue;
     }
-    int64_t q[4][3];
-    for (int v = 0; v < 4; ++v) {
-      for (int d = 0; d < 3; ++d) {
+    int64_t q[D + 1][D];
+    for (std::size_t v = 0; v <= D; ++v) {
+      for (std::size_t d = 0; d < D; ++d) {
         q[v][d] = snap(p[v][d], snap_bits);
       }
     }
-    detail::store_record(out, t, setup_tet<T>(q, snap_bits));
+    detail::store_record(out, t, setup_simplex<T, D>(q, snap_bits));
   }
 }
 
-SkippedTets count_skipped(const TetStatus* status, int64_t num_tets) {
+SkippedSimplices count_skipped(const SimplexStatus* status, int64_t num_simplices) {
   int64_t inverted = 0;
   int64_t outside_window = 0;
 #pragma omp parallel for schedule(static) reduction(+ : inverted, outside_window)
-  for (int64_t t = 0; t < num_tets; ++t) {
-    inverted += status[t] == TetStatus::inverted ? 1 : 0;
-    outside_window += status[t] == TetStatus::outside_window ? 1 : 0;
+  for (int64_t t = 0; t < num_simplices; ++t) {
+    inverted += status[t] == SimplexStatus::inverted ? 1 : 0;
+    outside_window += status[t] == SimplexStatus::outside_window ? 1 : 0;
   }
-  return SkippedTets{inverted, outside_window};
+  return SkippedSimplices{inverted, outside_window};
 }
 
-template <Real T>
-void locate(const TetSetupView<T>& s, GridShape shape, int32_t* tet_id) {
+template <Real T, std::size_t D>
+void locate(const SimplexSetupView<T, D>& s, GridShape<D> shape, int32_t* simplex_id) {
   check_shape(shape);
-  fill(tet_id, num_voxels(shape), int32_t{-1});
-#pragma omp parallel for schedule(dynamic, tet_chunk)
-  for (int64_t t = 0; t < s.num_tets; ++t) {
-    const TetRecord<T> rec = detail::load_record(s, t);
-    if (rec.status != TetStatus::ok) {
+  fill(simplex_id, num_voxels(shape), int32_t{-1});
+#pragma omp parallel for schedule(dynamic, simplex_chunk)
+  for (int64_t t = 0; t < s.num_simplices; ++t) {
+    const SimplexRecord<T, D> rec = detail::load_record(s, t);
+    if (rec.status != SimplexStatus::ok) {
       continue;
     }
-    for_each_owned(rec, shape, [&](const int64_t (&)[3], int64_t index) {
-      store_relaxed(tet_id[index], static_cast<int32_t>(t));
+    for_each_owned(rec, shape, [&](const int64_t (&)[D], int64_t index) {
+      store_relaxed(simplex_id[index], static_cast<int32_t>(t));
     });
   }
 }
 
-template <Real T>
-void barycentrics(const TetSetupView<T>& s, GridShape shape, const int32_t* tet_id, T* bary) {
+template <Real T, std::size_t D>
+void barycentrics(const SimplexSetupView<T, D>& s, GridShape<D> shape, const int32_t* simplex_id,
+                  T* bary) {
   check_shape(shape);
+  const int64_t rows = num_rows(shape);
+  const int64_t width = shape[D - 1];
   int64_t bad_ids = 0;
 #pragma omp parallel for schedule(static) reduction(+ : bad_ids)
-  for (int64_t i0 = 0; i0 < shape[0]; ++i0) {
-    for (int64_t i1 = 0; i1 < shape[1]; ++i1) {
-      for (int64_t i2 = 0; i2 < shape[2]; ++i2) {
-        const int64_t x[3] = {i0, i1, i2};
-        bad_ids += valid_tet_id(s, tet_id[voxel_index(shape, i0, i1, i2)], x) ? 0 : 1;
-      }
+  for (int64_t r = 0; r < rows; ++r) {
+    int64_t x[D];
+    row_indices(shape, r, x);
+    for (int64_t i = 0; i < width; ++i) {
+      x[D - 1] = i;
+      bad_ids += valid_simplex_id(s, simplex_id[r * width + i], x) ? 0 : 1;
     }
   }
   if (bad_ids != 0) {
     throw std::invalid_argument(
-        "tet_id holds a value outside [-1, num_tets), a skipped tet, or a tet whose box does not "
-        "contain the voxel");
+        "simplex_id holds a value outside [-1, num_simplices), a skipped simplex, or a simplex "
+        "whose box does not contain the voxel");
   }
 
 #pragma omp parallel for schedule(static)
-  for (int64_t i0 = 0; i0 < shape[0]; ++i0) {
-    for (int64_t i1 = 0; i1 < shape[1]; ++i1) {
-      for (int64_t i2 = 0; i2 < shape[2]; ++i2) {
-        const int64_t index = voxel_index(shape, i0, i1, i2);
-        const int32_t t = tet_id[index];
-        if (t < 0) {
-          for (int j = 0; j < 3; ++j) {
-            bary[index * 3 + j] = T{0};
-          }
-          continue;
+  for (int64_t r = 0; r < rows; ++r) {
+    int64_t x[D];
+    row_indices(shape, r, x);
+    for (int64_t i = 0; i < width; ++i) {
+      const int64_t index = r * width + i;
+      const int32_t t = simplex_id[index];
+      if (t < 0) {
+        for (std::size_t j = 0; j < D; ++j) {
+          bary[index * static_cast<int64_t>(D) + static_cast<int64_t>(j)] = T{0};
         }
-        const int64_t x[3] = {i0, i1, i2};
-        store_barycentrics(detail::load_record(s, t), x, bary + index * 3);
+        continue;
       }
+      x[D - 1] = i;
+      store_barycentrics(detail::load_record(s, t), x, bary + index * static_cast<int64_t>(D));
     }
   }
 }
 
-template <Real T>
-void rasterize(const TetSetupView<T>& s, GridShape shape, int32_t* tet_id, T* bary) {
+template <Real T, std::size_t D>
+void rasterize(const SimplexSetupView<T, D>& s, GridShape<D> shape, int32_t* simplex_id, T* bary) {
   check_shape(shape);
-  fill(tet_id, num_voxels(shape), int32_t{-1});
-  fill(bary, num_voxels(shape) * 3, T{0});
-#pragma omp parallel for schedule(dynamic, tet_chunk)
-  for (int64_t t = 0; t < s.num_tets; ++t) {
-    const TetRecord<T> rec = detail::load_record(s, t);
-    if (rec.status != TetStatus::ok) {
+  fill(simplex_id, num_voxels(shape), int32_t{-1});
+  fill(bary, num_voxels(shape) * static_cast<int64_t>(D), T{0});
+#pragma omp parallel for schedule(dynamic, simplex_chunk)
+  for (int64_t t = 0; t < s.num_simplices; ++t) {
+    const SimplexRecord<T, D> rec = detail::load_record(s, t);
+    if (rec.status != SimplexStatus::ok) {
       continue;
     }
-    for_each_owned(rec, shape, [&](const int64_t (&x)[3], int64_t index) {
-      store_relaxed(tet_id[index], static_cast<int32_t>(t));
-      store_barycentrics(rec, x, bary + index * 3);
+    for_each_owned(rec, shape, [&](const int64_t (&x)[D], int64_t index) {
+      store_relaxed(simplex_id[index], static_cast<int32_t>(t));
+      store_barycentrics(rec, x, bary + index * static_cast<int64_t>(D));
     });
   }
 }
 
-template <Real T>
-void count_claims(const TetSetupView<T>& s, GridShape shape, int32_t* claims) {
+template <Real T, std::size_t D>
+void count_claims(const SimplexSetupView<T, D>& s, GridShape<D> shape, int32_t* claims) {
   check_shape(shape);
   fill(claims, num_voxels(shape), int32_t{0});
-#pragma omp parallel for schedule(dynamic, tet_chunk)
-  for (int64_t t = 0; t < s.num_tets; ++t) {
-    const TetRecord<T> rec = detail::load_record(s, t);
-    if (rec.status != TetStatus::ok) {
+#pragma omp parallel for schedule(dynamic, simplex_chunk)
+  for (int64_t t = 0; t < s.num_simplices; ++t) {
+    const SimplexRecord<T, D> rec = detail::load_record(s, t);
+    if (rec.status != SimplexStatus::ok) {
       continue;
     }
-    const Box box = clipped_box(rec, shape);
-    for (int64_t i0 = box.lo[0]; i0 <= box.hi[0]; ++i0) {
-      for (int64_t i1 = box.lo[1]; i1 <= box.hi[1]; ++i1) {
-        for (int64_t i2 = box.lo[2]; i2 <= box.hi[2]; ++i2) {
-          const int64_t x[3] = {i0, i1, i2};
-          if (owns(plane_values(rec, x))) {
-            std::atomic_ref<int32_t>(claims[voxel_index(shape, i0, i1, i2)])
-                .fetch_add(1, std::memory_order_relaxed);
-          }
-        }
+    for_each_in_box<D>(clipped_box(rec, shape), [&](auto... all) {
+      const int64_t x[D] = {all...};
+      if (owns(plane_values(rec, x))) {
+        std::atomic_ref<int32_t>(claims[voxel_index(shape, x)])
+            .fetch_add(1, std::memory_order_relaxed);
       }
-    }
+    });
   }
 }
 
-#define TETVOX_INSTANTIATE_CPU(T)                                                       \
-  template void setup_tets<T>(const MeshView<T>&, int, const TetSetupView<T>&);         \
-  template void locate<T>(const TetSetupView<T>&, GridShape, int32_t*);                 \
-  template void barycentrics<T>(const TetSetupView<T>&, GridShape, const int32_t*, T*); \
-  template void rasterize<T>(const TetSetupView<T>&, GridShape, int32_t*, T*);          \
-  template void count_claims<T>(const TetSetupView<T>&, GridShape, int32_t*);
-TETVOX_INSTANTIATE_CPU(float)
-TETVOX_INSTANTIATE_CPU(double)
+#define TETVOX_INSTANTIATE_CPU(T, D)                                                              \
+  template void setup_simplices<T, D>(const MeshView<T, D>&, int, const SimplexSetupView<T, D>&); \
+  template void locate<T, D>(const SimplexSetupView<T, D>&, GridShape<D>, int32_t*);              \
+  template void barycentrics<T, D>(const SimplexSetupView<T, D>&, GridShape<D>, const int32_t*,   \
+                                   T*);                                                           \
+  template void rasterize<T, D>(const SimplexSetupView<T, D>&, GridShape<D>, int32_t*, T*);       \
+  template void count_claims<T, D>(const SimplexSetupView<T, D>&, GridShape<D>, int32_t*);
+TETVOX_INSTANTIATE_CPU(float, 1)
+TETVOX_INSTANTIATE_CPU(float, 2)
+TETVOX_INSTANTIATE_CPU(float, 3)
+TETVOX_INSTANTIATE_CPU(double, 1)
+TETVOX_INSTANTIATE_CPU(double, 2)
+TETVOX_INSTANTIATE_CPU(double, 3)
 #undef TETVOX_INSTANTIATE_CPU
 
 }  // namespace tetvox::cpu

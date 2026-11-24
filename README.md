@@ -1,9 +1,10 @@
 # tetvox
 
-Fast, watertight, differentiable CUDA voxeliser for tetrahedral meshes (e.g. samseg probabilistic
-atlases). Every voxel is assigned to exactly one tetrahedron, together with its barycentric
-coordinates. This turns the mesh into a piecewise-linear interpolator whose output is
-differentiable with respect to vertex positions and vertex values.
+Fast, watertight, differentiable CUDA voxeliser for simplicial meshes in 1D, 2D and 3D: segments,
+triangles and tetrahedra (e.g. samseg probabilistic atlases). Every voxel (or pixel) is assigned to
+exactly one simplex, together with its barycentric coordinates. This turns the mesh into a
+piecewise-linear interpolator whose output is differentiable with respect to vertex positions and
+vertex values.
 
 Status: early development. See [docs/ROADMAP.md](docs/ROADMAP.md).
 

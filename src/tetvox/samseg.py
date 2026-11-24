@@ -1,4 +1,5 @@
-"""samseg atlas: a `TetMesh` plus the samseg model data (format: docs/knowledge/atlas-format.md)."""
+"""samseg atlas: a 3D `SimplexMesh` plus the samseg model data (format:
+docs/knowledge/atlas-format.md)."""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -8,16 +9,17 @@ import numpy as np
 import numpy.typing as npt
 
 from tetvox._typing import F
-from tetvox.mesh import TetMesh
+from tetvox.mesh import SimplexMesh
 
 
 @dataclass(frozen=True)
 class SamsegAtlas(Generic[F]):
-    """A samseg probabilistic atlas. Only `mesh` is used by tetvox ops.
+    """A samseg probabilistic atlas (3D only, ADR 0010). Only `mesh` is used by tetvox ops.
 
     Attributes:
-        mesh: the atlas mesh, in template voxel coordinates. `mesh.values` (N, K) holds the
-            per-vertex class priors (samseg alphas); rows sum to 1.
+        mesh: the tetrahedral atlas mesh, in template voxel coordinates: positions (N, 3),
+            simplices (T, 4). `mesh.values` (N, K) holds the per-vertex class priors (samseg
+            alphas); rows sum to 1.
         affine: (4, 4) template voxel -> world (mm) transform.
         can_move: (N, 3) per-vertex, per-axis mobility mask used during registration.
         names: K class names.
@@ -26,7 +28,7 @@ class SamsegAtlas(Generic[F]):
         stiffness: samseg mesh stiffness K (kappa) scaling the deformation prior.
     """
 
-    mesh: TetMesh[F]
+    mesh: SimplexMesh[F]
     affine: npt.NDArray[np.float64]
     can_move: npt.NDArray[np.bool_]
     names: tuple[str, ...]
@@ -49,9 +51,9 @@ def load_atlas_npz(path: Path, *, dtype: type[Any] = np.float32) -> SamsegAtlas[
             of the 12 stored atlases; pass `np.float64` to keep positions in double.
     """
     with np.load(path) as data:
-        mesh = TetMesh(
+        mesh = SimplexMesh(
             positions=data["positions"].astype(dtype),
-            tetrahedra=data["tetrahedra"].astype(np.int32),
+            simplices=data["tetrahedra"].astype(np.int32),
             values=data["alphas"].astype(dtype),
         )
         return SamsegAtlas(

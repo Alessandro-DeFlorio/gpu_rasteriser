@@ -1,3 +1,4 @@
+import itertools
 from pathlib import Path
 
 import numpy as np
@@ -7,38 +8,44 @@ import pytest
 ATLAS_ROOT = Path(__file__).resolve().parent.parent / "atlases"
 
 
-def kuhn_cube() -> tuple[npt.NDArray[np.float32], npt.NDArray[np.int32]]:
-    """Unit cube split into 6 tets sharing the main diagonal (Kuhn triangulation).
+def kuhn_cube(dim: int = 3) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.int32]]:
+    """Unit dim-cube split into dim! simplices sharing the main diagonal (Kuhn triangulation).
 
-    Vertex i sits at (bit0, bit1, bit2) of i. Every tet is positively oriented,
-    det[v1 - v0, v2 - v0, v3 - v0] > 0, as tetvox requires. Returns positions (8, 3) and
-    tetrahedra (6, 4).
+    Vertex i sits at (bit 0, ..., bit dim-1) of i. Every simplex is positively oriented,
+    det[v_1 - v_0, ..., v_dim - v_0] > 0, as tetvox requires. Returns positions (2^dim, dim) and
+    simplices (dim!, dim + 1).
     """
-    positions = np.array([[(i >> a) & 1 for a in range(3)] for i in range(8)], dtype=np.float32)
-    axis_orders = [(0, 1, 2), (0, 2, 1), (1, 0, 2), (1, 2, 0), (2, 0, 1), (2, 1, 0)]
-    tets = np.array([[0, 1 << a, (1 << a) | (1 << b), 7] for a, b, _ in axis_orders], np.int32)
-    v = positions[tets]
+    positions = np.array(
+        [[(i >> a) & 1 for a in range(dim)] for i in range(1 << dim)], dtype=np.float32
+    )
+    simplices = np.array(
+        [np.cumsum([0] + [1 << a for a in order]) for order in itertools.permutations(range(dim))],
+        np.int32,
+    )
+    v = positions[simplices].astype(np.float64)
     negative = np.linalg.det(v[:, 1:] - v[:, :1]) < 0
-    tets[negative] = tets[negative][:, [0, 2, 1, 3]]
-    return positions, tets
+    swapped = list(range(dim + 1))
+    swapped[0], swapped[1] = 1, 0
+    simplices[negative] = simplices[negative][:, swapped]
+    return positions, simplices
 
 
-def kuhn_grid(n: int) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.int32]]:
-    """A block of n x n x n unit Kuhn cubes covering [0, n]^3, all cubes cut the same way.
+def kuhn_grid(n: int, dim: int = 3) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.int32]]:
+    """A block of n^dim unit Kuhn cubes covering [0, n]^dim, all cubes cut the same way.
 
-    Returns positions ((n + 1)^3, 3) float64 on integer points and tetrahedra (6 n^3, 4), every
-    tet positively oriented. Neighbouring cubes share faces, so the block is a conforming mesh.
+    Returns positions ((n + 1)^dim, dim) float64 on integer points and simplices (dim! n^dim,
+    dim + 1), every simplex positively oriented. Neighbouring cubes share faces, so the block is
+    a conforming mesh.
     """
-    cube_positions, cube_tets = kuhn_cube()
-    axis = np.arange(n + 1)
-    grid = np.stack(np.meshgrid(axis, axis, axis, indexing="ij"), axis=-1).reshape(-1, 3)
-    corner_offsets = cube_positions.astype(np.int64)  # (8, 3) offsets of the cube's corners
-    tets = []
-    for corner in np.stack(np.meshgrid(*[np.arange(n)] * 3, indexing="ij"), -1).reshape(-1, 3):
-        corners = corner + corner_offsets
-        index = (corners[:, 0] * (n + 1) + corners[:, 1]) * (n + 1) + corners[:, 2]
-        tets.append(index[cube_tets])
-    return grid.astype(np.float64), np.concatenate(tets).astype(np.int32)
+    cube_positions, cube_simplices = kuhn_cube(dim)
+    points = np.stack(np.meshgrid(*[np.arange(n + 1)] * dim, indexing="ij"), axis=-1)
+    corner_offsets = cube_positions.astype(np.int64)  # (2^dim, dim) offsets of the cube's corners
+    cells = np.stack(np.meshgrid(*[np.arange(n)] * dim, indexing="ij"), -1).reshape(-1, dim)
+    simplices = []
+    for corner in cells:
+        index = np.ravel_multi_index(tuple((corner + corner_offsets).T), (n + 1,) * dim)
+        simplices.append(index[cube_simplices])
+    return points.reshape(-1, dim).astype(np.float64), np.concatenate(simplices).astype(np.int32)
 
 
 @pytest.fixture
