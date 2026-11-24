@@ -106,3 +106,27 @@ Details and method: `docs/research/R1-watertight-tet-rasterisation.md`.
 - The GEMS sources live in `github.com/freesurfer/samseg` (`gems/`, branch `dev`). The FreeSurfer
   repository keeps an identical copy of `kvlTetrahedronInteriorConstIterator.hxx` under
   `attic/gems/`.
+
+### K3 row workload and scatter statistics (measured in research R4, 2026-11-24)
+
+Adult atlas on its template grid (181×217×181), ownership from the CPU backend, rows along axis 0
+(`row_span`). Counts of work items, not timings. Method: `docs/research/R4-nvdiffrast-lessons.md`
+(§6.1 and "Method of the measurements").
+
+- Of the 10,572,440 K3 rows only 3,183,490 (30.1%) own a voxel. A non-empty row spans 2.20 voxels
+  on average (median 1, p99 13, max 95). 3,636 tets (1.1%) own no voxel.
+- 4,717,158 rows (44.6%) lie under the tet's projection onto axes (1, 2); there are 1,795,028
+  `(tet, i2)` slabs.
+- A division-free test per face (the largest `t_j` over the row is negative) rejects 4,214,092 of
+  the 7,388,950 empty rows and never a non-empty one. It cuts the int64 divisions of `row_span`
+  from 42.0 M to 25.3 M.
+- If every K3 lane loops over its own row, a warp runs for its longest row: 33.8 M lane-iterations
+  for 7.0 M voxels (utilisation 20.7%). Pooling the rows of a 256-row block and dealing the voxels
+  evenly gives 55.5%; one thread per tet gives 10.7%.
+- Global atomics needed for a 12-float per-tet moment set: 84.0 M per voxel, 38.2 M per non-empty
+  row, 6.5 M per group of same-tet rows in a warp of 32 consecutive rows, 4.3 M per group in a
+  256-row block. In a voxel-parallel kernel a warp of 32 voxels along axis 2 holds 2.15 owned
+  voxels per distinct tet (3.45 for a 4×8 block in axes 1, 2).
+- Tet–brick pairs after an exact conservative plane test: 1.76 M (4³ bricks), 0.96 M (8³), 0.62 M
+  (16³); 15 / 65 / 310 tets per brick. Running rows inside each brick would give 15.3 M / 15.0 M /
+  13.6 M row pieces, more than the 10.6 M whole rows of K3.

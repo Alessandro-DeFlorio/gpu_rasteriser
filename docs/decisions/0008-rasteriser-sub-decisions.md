@@ -3,7 +3,8 @@
 Status: accepted (2026-11-23). Owner answers to the sub-decisions that ADR 0007 left open, and to
 new ones found while planning the build options and the CPU backend. Amends ADR 0007 (precision
 switch replaced) and ADR 0006 (grid limit, status of k). Point B (the public shape of `rasterize`)
-and the loader dtype were settled later in ADR 0009.
+and the loader dtype were settled later in ADR 0009. Amended by ADR 0010: the window exponent L is
+`window_bits<D>(k)`, per dimension; the rest holds for D = 1, 2, 3 with the generic names.
 
 ## Decision
 

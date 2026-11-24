@@ -1,7 +1,9 @@
 # 0007 — CPU backend, `rasterize` contract, snapping and precision switch
 
 Status: accepted (2026-11-23). The owner answered points 1–4 directly and accepted the session's
-recommendations for the rest. Amended by ADR 0008: the `TETVOX_REAL` precision switch
+recommendations for the rest. Amended by ADR 0010: every statement holds for D = 1, 2, 3 with the
+generic names; axes are 0 … D−1, axis 0 first in the tie-break; rows run along the last axis.
+Amended by ADR 0008: the `TETVOX_REAL` precision switch
 is replaced by a dtype-generic interface (float32 and float64 at run time). Amended by ADR 0009: the
 optional `visits` output becomes the op `count_claims`, the counts come from the per-tet `status`
 written by `setup_tets`, and the Python call is `setup_tets` + `rasterize` instead of

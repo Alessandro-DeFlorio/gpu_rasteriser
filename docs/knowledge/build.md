@@ -99,3 +99,17 @@ Verified on the dev machine (2026-11-23):
   now `build/{wheel_tag}/{state}`, so `editable` and `wheel` builds are kept apart. If an editable
   import ever fails while re-running CMake, `rm -rf build` and reinstall with
   `pip install --no-build-isolation -ve .`.
+- (Verified 2026-11-24, research R3.) Thrust and CUB ship with the toolkit under
+  `/usr/local/cuda/include/cccl/`; nvcc 13.5 finds `<thrust/scan.h>` without an extra include
+  path.
+- (Verified 2026-11-24, research R3.) A `constexpr` function without `__host__ __device__` called
+  from a host-device function gives nvcc warning #20013 (it asks for `--expt-relaxed-constexpr`).
+  Marking the helper `TETVOX_HD constexpr` removes the warning.
+- (Verified 2026-11-24, research R3.) `template <int D> void f(const std::array<int64_t, D>&)`
+  does not deduce `D` (g++ 13.3: "mismatched types 'int' and 'long unsigned int'"): the size of
+  `std::array` is a `std::size_t`.
+- (Verified 2026-11-24, research R3.) Registers and local memory of a kernel can be read from the
+  object file: `cuobjdump -elf file.o` lists `EIATTR_REGCOUNT` and `EIATTR_FRAME_SIZE` per
+  function in `.nv.info`; a non-zero frame size, or `__local_depot` in `nvcc -ptx` output, means
+  local memory. `cuobjdump -sass file.o` gives the instructions. `__int128` arrays in a kernel
+  produced local-memory frames (496–688 B); the same code with int64 had none.

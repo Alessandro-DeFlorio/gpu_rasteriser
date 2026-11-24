@@ -2,7 +2,8 @@
 
 Status: accepted (2026-11-23); amended by ADR 0007 and ADR 0008 (stored π and mesh
 positions/values are float32 or float64, following the caller's dtype at run time, not fixed
-float32).
+float32). Amended by ADR 0010: the contracts hold for meshes of dimension D = 1, 2, 3, with the
+generic names (`SimplexMesh`, `simplex_id`, …) and D in place of 3 in every shape.
 
 Context: `docs/research/R1-watertight-tet-rasterisation.md` and
 `docs/research/R2-decoupling-cost-from-rasteriser.md` (including its addendum). This ADR records the

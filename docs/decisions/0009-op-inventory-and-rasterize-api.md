@@ -3,7 +3,11 @@
 Status: accepted (2026-11-23). The owner approved the session's proposal (points B1–B14) unchanged.
 It settles ADR 0008's open point B and the dtype of `load_atlas_npz`. It amends ADR 0007: the
 optional `visits` output becomes the separate op `count_claims`, the counts move to the setup op,
-and the Python call `rasterize(mesh, shape)` becomes the setup + rasterize chain below.
+and the Python call `rasterize(mesh, shape)` becomes the setup + rasterize chain below. Amended by
+ADR 0010: names (`setup_simplices`, `SimplexSetup`, `simplex_id`, `simplex_moments`, …), the C++
+form `<Real T, std::size_t D>` with `GridShape<D>`, shapes with D in place of 3, rows along axis
+D − 1, Python dispatch on D; "only `count_skipped` synchronises" and the `cudaMallocAsync` plan are
+open for the K3 launcher until the CUDA item benchmarks the candidates.
 
 Context: ADR 0005–0008, `docs/research/R1-watertight-tet-rasterisation.md` ("Recommended
 algorithm", "Impact on design"), `docs/research/R2-decoupling-cost-from-rasteriser.md` (§1, "Impact

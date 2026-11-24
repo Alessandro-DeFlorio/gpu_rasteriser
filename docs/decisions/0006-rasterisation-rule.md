@@ -3,7 +3,10 @@
 Status: accepted (2026-11-23); amended by ADR 0007 (axes named 0, 1, 2 with axis 0 first; snapping
 rounds to nearest, ties to even; the CPU code is a public backend sharing this header) and by ADR
 0008 (no grid-size limit, windows are per tet; window test `span ≤ 2^(k+L)`; k becomes a run-time
-parameter unless compile time proves measurably faster).
+parameter unless compile time proves measurably faster). Amended by ADR 0010: the rule, the
+snapping and the arithmetic hold for simplices of dimension D = 1, 2, 3; `2k + 3L ≤ 59` is the D = 3
+case of `(D−1)k + DL ≤ 62 − ⌊log₂(2·D!)⌋`; K3 rows run along the last axis; "no atomics" is open for
+the K3 launcher until the CUDA item benchmarks the candidates.
 
 Context: `docs/research/R1-watertight-tet-rasterisation.md` (§1–§3, "Impact on design"). Policies on
 the boundary, invalid meshes and the raster buffer are in ADR 0005; this ADR does not repeat them.
