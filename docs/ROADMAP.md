@@ -58,34 +58,18 @@ Every agent session reads this file first and updates it last. Status: `todo` / 
   `check.sh` building both. Dtype-generic `TetMesh[F]`, `SamsegAtlas[F]`,
   `load_atlas_npz(dtype=float32)` (ADR 0009). Details in `build.md`.
 
+- 2026-11-24 Shared header + CPU backend (ADR 0006–0009), prototype: `types.hpp`, `raster.hpp`
+  (`snap`, `setup_tet`, `plane_values`, `owns`, `barycentric`, `row_span`, `__host__ __device__`),
+  `cpu.hpp`/`cpu.cpp` (ops 1–6, float and double, OpenMP), nanobind overloads, Python wrappers
+  (`tetvox.setup_tets` … `count_claims`, `TetSetup`, `TetStatus`, `SkippedTets`). Every test of the
+  item passes, including exhaustive exactly-once on the five distinct atlas meshes; the k
+  benchmark shows no difference in the parallel op (run-time k kept, owner to confirm). The C++
+  example rasterises a Kuhn cube in both build configurations. Facts and timings in
+  `rasteriser-cpu.md`. Not done: allocation of outputs for torch inputs (torch is not in
+  `tetvox-dev`; numpy only, other frameworks pass `out=`).
+
 ## In progress
-- doing — **Shared header + CPU backend (ADR 0006–0009).**
-  - Public headers: `tetvox/types.hpp` (`Real`, `GridShape`, `default_snap_bits`, `TetStatus`,
-    `SkippedTets`, `MeshView<T>`, `TetSetupView<T>`), `tetvox/raster.hpp` (`snap`, `setup_tet`,
-    `plane_values`, `owns`, `barycentric`, `row_span` as `__host__ __device__`, templated on
-    float/double), `tetvox/cpu.hpp`.
-  - `tetvox::cpu::{setup_tets, count_skipped, locate, barycentrics, rasterize, count_claims}`,
-    explicitly instantiated for float and double. `setup_tets` validates (ADR 0008) and takes
-    `snap_bits` (range 0–24). Loop structure of `meshing_cxx`: OpenMP over tets, grid-clipped box,
-    each row solved with `row_span`; `count_claims` tests `owns` at every box voxel instead. File
-    header credits Koen Van Leemput and Alessandro De Florio and lists the departures (rounding,
-    axis order).
-  - Bindings (nanobind overloads per dtype) and Python wrappers with the same names: `TetSetup`
-    dataclass, `TetStatus`, `SkippedTets`, `DEFAULT_SNAP_BITS`, `out=`, allocation in the input's
-    framework (numpy, torch). Regenerate `_core.pyi`.
-  - Tests (details in ADR 0008/0009):
-    - a pure-Python exact-integer reference on small meshes: `TetSetup` fields bit for bit, `tet_id`,
-      `claims`, π (tolerance 1e-6 f32, 1e-12 f64);
-    - `rasterize` bit-identical to `barycentrics(setup, locate(setup, shape))`;
-    - a Kuhn grid with vertices on voxel centres, and scaled;
-    - a rotated placement partly outside the grid;
-    - exhaustive exactly-once ownership (`count_claims`) on the adult and the four infant meshes;
-    - `π₁..π₃ ≥ 0` and `1 − Σπ ≥ −1e-6`;
-    - the inverted, degenerate, non-finite and out-of-window statuses and counts;
-    - an adversarial bit-budget test (span exactly 1024 voxels, and one lattice unit more);
-    - `snap_bits` outside 0–24 rejected.
-  - Benchmark run-time vs `constexpr` k and report to the owner (ADR 0008). Extend `examples/cpp/`
-    to run `setup_tets → rasterize` and `count_claims` on the Kuhn cube.
+- (none)
 
 ## Next
 - todo — First CUDA backend for ops 1–6 of ADR 0009 (K3 for `locate`/`rasterize`, stream as the
@@ -119,14 +103,21 @@ Every agent session reads this file first and updates it last. Status: `todo` / 
 - `TetMesh.values` is required, so a mesh without data uses shape `(N, 0)`. Make it optional if
   that proves awkward (a small, local change).
 - How far to take curvature after `None` (`GaussNewton` is the cheapest next step, R2 addendum A4).
-- Run-time vs compile-time k (ADR 0008): decide from the CPU-backend benchmark.
+- Run-time vs compile-time k (ADR 0008): the CPU benchmark shows no difference in the parallel
+  `setup_tets` op (`rasteriser-cpu.md`); run time is kept. Owner to confirm.
+- Torch: add torch to `tetvox-dev` (or a CI job) so the torch allocation path of the Python ops can
+  be built and tested (ADR 0009 says numpy and torch).
+- Row direction for K3: rows run along axis 0, while memory has axis 2 fastest (ADR 0007/0009).
+  Measure rows along axis 2 before the CUDA kernel (`rasteriser-cpu.md`).
 - Deferred to the prototype (owner, 2026-11-24). Each is built provisionally as noted and must be
   confirmed or changed:
   1. `TETVOX_ENABLE_CUDA=ON` without a CUDA compiler: provisionally CMake's own configure error
      (recommended; a silent CPU-only fallback is the alternative).
-  2. `barycentrics` and the caller's `tet_id`: is a value outside `[−1, T)`, or one naming a skipped
-     tet, checked (pre-pass, `invalid_argument`; recommended) or a documented precondition?
+  2. `barycentrics` and the caller's `tet_id`: is a value outside `[−1, T)`, one naming a skipped
+     tet, or one whose tet's box does not contain the voxel checked (pre-pass, `invalid_argument`;
+     recommended, and built that way) or a documented precondition? The box condition was added
+     while building: without it a wrong id can overflow int64 in `plane_values`.
   3. torch tensors with `requires_grad=True` passed to plain ops: provisionally they fail in the
      DLPack export (recommended; the alternative is a silent detach in the wrapper).
-  4. Range of `f_j`: ADR 0008 says `[0, 1]`, ADR 0009 `[0, 1)`. To be derived from the tie-break
-     folding in `setup_tet`; it bears on the float32 exactness behind `snap_bits ≤ 24`.
+  4. Settled 2026-11-24: `f_j ∈ [0, 1]` (ADR 0008 is right; ADR 0009's table corrected). Exact in
+     float32 for `snap_bits ≤ 24` (`rasteriser-cpu.md`).

@@ -80,7 +80,7 @@ Fused:    setup_tets ─► accumulate<Cost> ───────────�
   |---|---|---|---|
   | `normals` | (T,4,3) | int64 | inward face normals `n_j`, lattice units |
   | `offsets` | (T,4) | int64 | `c_j`, tie-break folded in |
-  | `fractions` | (T,4) | T | `f_j ∈ [0, 1)` |
+  | `fractions` | (T,4) | T | `f_j ∈ [0, 1]` (corrected 2026-11-24 from `[0, 1)`; derivation in `rasteriser-cpu.md`) |
   | `bary_scale` | (T,) | T | `2ᵏ/D`; `p_j = n_j · bary_scale` is `∂π_j/∂x` in voxel units |
   | `box_lo`, `box_hi` | (T,3) | int64 | `O = ceil(min q/2ᵏ)`, `floor(max q/2ᵏ)`; int64 because `|v|` may reach `2^(62−k)` |
   | `status` | (T,) | uint8 | `TetStatus`: `ok = 0`, `inverted = 1`, `outside_window = 2` |

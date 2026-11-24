@@ -49,6 +49,15 @@ Verified on the dev machine (2026-11-23):
   `cuda_enabled: bool = True`. A CPU-only build would generate `= False`; the stub gate runs only on
   the default build.
 
+## OpenMP (ADR 0007/0008)
+- `find_package(OpenMP COMPONENTS CXX)`; when found, `tetvox_core` links `OpenMP::OpenMP_CXX`
+  PRIVATE. CMake exports a static library's private dependencies as `$<LINK_ONLY:...>`, so
+  consumers link `libgomp` but compile without `-fopenmp`. `tetvoxConfig.cmake` then calls
+  `find_dependency(OpenMP COMPONENTS CXX)`. Without OpenMP the pragmas are ignored and the ops run
+  serially with the same results.
+- (Verified 2026-11-24) gcc 13.3 finds OpenMP (`-fopenmp`, `gomp;pthread`); the example links
+  against the installed package in both the CUDA and the CPU-only configuration.
+
 ## C++ consumers
 - `scripts/check.sh` builds the library with plain CMake in `build/cpp/core`, installs component
   `cpp` into `build/cpp/install`, then builds and runs `examples/cpp` against it

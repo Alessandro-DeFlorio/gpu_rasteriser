@@ -29,8 +29,15 @@ include(CMakePackageConfigHelpers)
 
 # Core library (ADR 0004): public headers in csrc/include, kernels in csrc/src. It leaves the choice
 # of CUDA runtime (static or shared cudart) to whatever links it.
-add_library(tetvox_core STATIC)
+add_library(tetvox_core STATIC csrc/src/cpu.cpp)
 add_library(tetvox::tetvox ALIAS tetvox_core)
+# CPU backend parallelism (ADR 0007/0008). Without OpenMP the same code runs serially. A private
+# dependency of a static library is exported as link-only, so consumers need no -fopenmp.
+find_package(OpenMP COMPONENTS CXX)
+set(TETVOX_HAS_OPENMP ${OpenMP_CXX_FOUND})
+if(TETVOX_HAS_OPENMP)
+  target_link_libraries(tetvox_core PRIVATE OpenMP::OpenMP_CXX)
+endif()
 if(TETVOX_CUDA_ENABLED)
   target_sources(tetvox_core PRIVATE csrc/src/device.cu)
   target_compile_features(tetvox_core PUBLIC cuda_std_20)

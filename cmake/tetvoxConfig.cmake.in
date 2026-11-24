@@ -15,5 +15,10 @@ if(tetvox_CUDA_ENABLED AND NOT "CUDA" IN_LIST _tetvox_languages)
   return()
 endif()
 
+include(CMakeFindDependencyMacro)
+if(@TETVOX_HAS_OPENMP@)
+  find_dependency(OpenMP COMPONENTS CXX)
+endif()
+
 include("${CMAKE_CURRENT_LIST_DIR}/tetvoxTargets.cmake")
 check_required_components(tetvox)

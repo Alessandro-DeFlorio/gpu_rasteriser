@@ -1,10 +1,10 @@
 # Architecture
 
-Status: skeleton. Only the build chain (C++ package plus optional Python module, with or without
-CUDA) and the atlas loader exist. Decided but not built: the op contracts (ADR 0005, R2 and its addendum), the
-rasterisation rule (ADR 0006), the CPU/CUDA backends and build options (ADR 0007, amended by ADR
-0008: dtype-generic interface, window rule, validation) and the op inventory with the public shape
-of the rasterisation ops (ADR 0009).
+Status: prototype. Built: the build chain (C++ package plus optional Python module, with or
+without CUDA), the atlas loader, the shared header of per-element procedures and the CPU backend of
+the rasterisation ops 1–6 of ADR 0009, with bindings and Python wrappers. Decided but not built: the
+CUDA backend, ops 7–12 (interpolation, gradients, fused accumulation; ADR 0005, R2 and its
+addendum) and the deformation prior.
 
 ## Layers
 1. **C++/CUDA library** (`csrc/`), a first-class interface on its own (ADR 0004). It is
@@ -17,8 +17,8 @@ of the rasterisation ops (ADR 0009).
      `TetSetupView<T>`), `GridShape`, `TetStatus` and `default_snap_bits`; `cpu.hpp` (and later
      `cuda.hpp`) declare the array ops.
    - `csrc/src/`: kernels and host launchers, compiled into `tetvox_core`, which is exported as the
-     CMake target `tetvox::tetvox` (`find_package(tetvox)` or `add_subdirectory`). Consumers enable
-     CUDA and choose the cudart flavour themselves.
+     CMake target `tetvox::tetvox` (`find_package(tetvox)` or `add_subdirectory`). Consumers of a
+     CUDA build enable CUDA and choose the cudart flavour themselves.
    - Two backends with one contract (ADR 0007): `tetvox::cpu::*` (C++, OpenMP if found) and
      `tetvox::cuda::*` (kernels, `cudaStream_t`). Both call the same shared header, so their outputs
      are bit-identical. Build option `TETVOX_ENABLE_CUDA` (default ON; OFF gives a CPU-only build),
@@ -26,7 +26,7 @@ of the rasterisation ops (ADR 0009).
      dtype-generic: templates constrained by `Real` and explicitly instantiated for float and
      double, outputs follow the input dtype (ADR 0008/0009). The CUDA twin of each op adds only a
      trailing `cudaStream_t`. Both backends run the same per-row procedure (`row_span`): the CPU
-     with OpenMP over tets, the GPU with K3 (one thread per box row). Planned, not built yet.
+     with OpenMP over tets (built), the GPU with K3 (one thread per box row; not built yet).
    - `examples/cpp/`: a stand-alone consumer of the installed package, built and run by
      `scripts/check.sh`.
 2. **Bindings** (`csrc/bindings/module.cpp`), built only with `TETVOX_BUILD_PYTHON` (ON under
