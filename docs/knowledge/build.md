@@ -34,11 +34,29 @@ Verified on the dev machine (2026-11-23):
 - cudart: only `_core` sets `CUDA_RUNTIME_LIBRARY Static`, to avoid clashing with torch's bundled
   runtime (ADR 0001). The C++ target leaves the choice to consumers (ADR 0004).
 
+## CUDA or CPU-only (ADR 0007/0008)
+- `TETVOX_ENABLE_CUDA` (default ON). `project()` lists only CXX; CUDA is enabled under the option.
+  With ON and no CUDA compiler, configuration stops with CMake's own error (provisional; owner
+  question pending, see ROADMAP). OFF builds `csrc/src/device_cpu_only.cpp` instead of
+  `device.cu`, so `device_count()` returns 0.
+- `cmake/config.hpp.in` → `<build>/include/tetvox/config.hpp`, installed with the other headers:
+  `TETVOX_CUDA_ENABLED` (0/1, `#cmakedefine01`) and `tetvox::cuda_enabled`. Python reads
+  `tetvox.cuda_enabled` from `_core`.
+- CPU-only Python build: `pip install . -Ccmake.define.TETVOX_ENABLE_CUDA=OFF`. (Verified
+  2026-11-24) the module then imports, reports `cuda_enabled False`, `device_count() 0`, and links
+  no CUDA library.
+- The committed `_core.pyi` records the default (CUDA) build: stubgen writes
+  `cuda_enabled: bool = True`. A CPU-only build would generate `= False`; the stub gate runs only on
+  the default build.
+
 ## C++ consumers
 - `scripts/check.sh` builds the library with plain CMake in `build/cpp/core`, installs component
   `cpp` into `build/cpp/install`, then builds and runs `examples/cpp` against it
-  (`-DCMAKE_PREFIX_PATH=<prefix>`).
-- (Verified 2026-11-23) A consumer must enable the CUDA language. Then CMake links the CUDA runtime
+  (`-DCMAKE_PREFIX_PATH=<prefix>`). It repeats this CPU-only in `build/cpp-cpu-only`.
+- `tetvoxConfig.cmake` sets `tetvox_CUDA_ENABLED` before anything else. A consumer that does not
+  know how tetvox was built does what `examples/cpp` does: `find_package(tetvox QUIET)` to read the
+  flag, `enable_language(CUDA)` if it is set, then `find_package(tetvox REQUIRED)`.
+- (Verified 2026-11-23) A consumer of a CUDA build must enable the CUDA language. Then CMake links the CUDA runtime
   it asks for: static by default, shared with `-DCMAKE_CUDA_RUNTIME_LIBRARY=Shared`. In a CXX-only
   project the link fails with `undefined reference to __cudaRegisterFatBinary`. `tetvoxConfig.cmake`
   therefore refuses, with a readable message, when CUDA is not enabled.

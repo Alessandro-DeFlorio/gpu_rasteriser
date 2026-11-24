@@ -2,15 +2,17 @@
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Generic, overload
 
 import numpy as np
 import numpy.typing as npt
 
+from tetvox._typing import F
 from tetvox.mesh import TetMesh
 
 
 @dataclass(frozen=True)
-class SamsegAtlas:
+class SamsegAtlas(Generic[F]):
     """A samseg probabilistic atlas. Only `mesh` is used by tetvox ops.
 
     Attributes:
@@ -24,7 +26,7 @@ class SamsegAtlas:
         stiffness: samseg mesh stiffness K (kappa) scaling the deformation prior.
     """
 
-    mesh: TetMesh
+    mesh: TetMesh[F]
     affine: npt.NDArray[np.float64]
     can_move: npt.NDArray[np.bool_]
     names: tuple[str, ...]
@@ -33,13 +35,24 @@ class SamsegAtlas:
     stiffness: float
 
 
-def load_atlas_npz(path: Path) -> SamsegAtlas:
-    """Load a samseg atlas `.npz`, converting arrays to the canonical dtypes of `SamsegAtlas`."""
+# Overloads because mypy rejects a default for a parameter typed with a constrained TypeVar.
+@overload
+def load_atlas_npz(path: Path) -> SamsegAtlas[np.float32]: ...
+@overload
+def load_atlas_npz(path: Path, *, dtype: type[F]) -> SamsegAtlas[F]: ...
+def load_atlas_npz(path: Path, *, dtype: type[Any] = np.float32) -> SamsegAtlas[Any]:
+    """Load a samseg atlas `.npz`, converting arrays to the canonical dtypes of `SamsegAtlas`.
+
+    Args:
+        path: the atlas file.
+        dtype: real dtype of `mesh.positions` and `mesh.values` (ADR 0009). The default matches 11
+            of the 12 stored atlases; pass `np.float64` to keep positions in double.
+    """
     with np.load(path) as data:
         mesh = TetMesh(
-            positions=data["positions"].astype(np.float32),
+            positions=data["positions"].astype(dtype),
             tetrahedra=data["tetrahedra"].astype(np.int32),
-            values=data["alphas"].astype(np.float32),
+            values=data["alphas"].astype(dtype),
         )
         return SamsegAtlas(
             mesh=mesh,

@@ -1,11 +1,20 @@
 cmake_minimum_required(VERSION 3.26)
-# Must precede project(): enabling CUDA replaces an unset value with the compiler default (sm_75),
-# which needs PTX JIT on newer GPUs (docs/knowledge/build.md). A parent project's value wins.
+# Must precede enable_language(CUDA): enabling CUDA replaces an unset value with the compiler
+# default (sm_75), which needs PTX JIT on newer GPUs (docs/knowledge/build.md). A parent project's
+# value wins.
 if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
   set(CMAKE_CUDA_ARCHITECTURES native)
 endif()
 # The version is the single source of truth: pyproject.toml reads it from this line.
-project(tetvox VERSION 0.0.1 LANGUAGES CXX CUDA)
+project(tetvox VERSION 0.0.1 LANGUAGES CXX)
+
+# ADR 0007/0008: OFF gives a CPU-only build that needs no CUDA compiler.
+option(TETVOX_ENABLE_CUDA "Build the CUDA backend (needs a CUDA compiler)" ON)
+if(TETVOX_ENABLE_CUDA)
+  enable_language(CUDA)
+endif()
+# Read by config.hpp.in (#cmakedefine01) and exported to consumers by tetvoxConfig.cmake.
+set(TETVOX_CUDA_ENABLED ${TETVOX_ENABLE_CUDA})
 
 if(DEFINED SKBUILD)
   set(tetvox_python_default ON)
@@ -20,14 +29,30 @@ include(CMakePackageConfigHelpers)
 
 # Core library (ADR 0004): public headers in csrc/include, kernels in csrc/src. It leaves the choice
 # of CUDA runtime (static or shared cudart) to whatever links it.
-add_library(tetvox_core STATIC csrc/src/device.cu)
+add_library(tetvox_core STATIC)
 add_library(tetvox::tetvox ALIAS tetvox_core)
+if(TETVOX_CUDA_ENABLED)
+  target_sources(tetvox_core PRIVATE csrc/src/device.cu)
+  target_compile_features(tetvox_core PUBLIC cuda_std_20)
+else()
+  target_sources(tetvox_core PRIVATE csrc/src/device_cpu_only.cpp)
+endif()
 # Globbed so that a new public header can never be left out of the installed package.
 file(GLOB_RECURSE tetvox_public_headers CONFIGURE_DEPENDS csrc/include/tetvox/*.hpp
      csrc/include/tetvox/*.cuh)
-target_sources(tetvox_core PUBLIC FILE_SET HEADERS BASE_DIRS csrc/include FILES
-                                                    ${tetvox_public_headers})
-target_compile_features(tetvox_core PUBLIC cxx_std_20 cuda_std_20)
+set(tetvox_generated_include ${CMAKE_CURRENT_BINARY_DIR}/include)
+configure_file(cmake/config.hpp.in ${tetvox_generated_include}/tetvox/config.hpp @ONLY)
+target_sources(
+  tetvox_core
+  PUBLIC FILE_SET
+         HEADERS
+         BASE_DIRS
+         csrc/include
+         ${tetvox_generated_include}
+         FILES
+         ${tetvox_public_headers}
+         ${tetvox_generated_include}/tetvox/config.hpp)
+target_compile_features(tetvox_core PUBLIC cxx_std_20)
 set_target_properties(
   tetvox_core
   PROPERTIES EXPORT_NAME tetvox

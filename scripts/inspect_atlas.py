@@ -12,16 +12,17 @@ import numpy.typing as npt
 from tetvox import TetMesh, load_atlas_npz
 
 FloatArray = npt.NDArray[np.float64]
+Mesh = TetMesh[np.float32]  # load_atlas_npz default dtype
 
 
-def signed_volumes(mesh: TetMesh) -> FloatArray:
+def signed_volumes(mesh: Mesh) -> FloatArray:
     """(T,) signed tet volumes det(A)/6 in voxel^3, computed in float64."""
     v = mesh.positions.astype(np.float64)[mesh.tetrahedra]
     edges = v[:, 1:] - v[:, :1]
     return np.asarray(np.linalg.det(edges.transpose(0, 2, 1)) / 6.0)
 
 
-def max_edge_lengths(mesh: TetMesh) -> FloatArray:
+def max_edge_lengths(mesh: Mesh) -> FloatArray:
     """(T,) length of the longest of the 6 edges of each tet, in voxels."""
     v = mesh.positions.astype(np.float64)[mesh.tetrahedra]
     pairs = [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)]
@@ -29,21 +30,21 @@ def max_edge_lengths(mesh: TetMesh) -> FloatArray:
     return np.asarray(lengths.max(axis=1))
 
 
-def lattice_points_in_bbox(mesh: TetMesh) -> npt.NDArray[np.int64]:
+def lattice_points_in_bbox(mesh: Mesh) -> npt.NDArray[np.int64]:
     """(T,) number of integer voxel centres inside each tet's axis-aligned bounding box."""
     v = mesh.positions.astype(np.float64)[mesh.tetrahedra]
     extent = np.floor(v.max(axis=1)) - np.ceil(v.min(axis=1)) + 1
     return np.asarray(np.clip(extent, 0, None).prod(axis=1).astype(np.int64))
 
 
-def face_multiplicities(mesh: TetMesh) -> npt.NDArray[np.int64]:
+def face_multiplicities(mesh: Mesh) -> npt.NDArray[np.int64]:
     """Number of tets sharing each distinct triangular face."""
     faces = np.concatenate([np.delete(mesh.tetrahedra, i, axis=1) for i in range(4)])
     _, counts = np.unique(np.sort(faces, axis=1), axis=0, return_counts=True)
     return np.asarray(counts.astype(np.int64))
 
 
-def boundary_vertices(mesh: TetMesh) -> npt.NDArray[np.bool_]:
+def boundary_vertices(mesh: Mesh) -> npt.NDArray[np.bool_]:
     """(N,) mask of vertices lying on a boundary face (face owned by a single tet)."""
     faces = np.sort(np.concatenate([np.delete(mesh.tetrahedra, i, axis=1) for i in range(4)]), 1)
     unique, counts = np.unique(faces, axis=0, return_counts=True)

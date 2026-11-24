@@ -1,7 +1,7 @@
 # Architecture
 
-Status: skeleton. Only the build chain (C++ package plus optional Python module) and the atlas
-loader exist. Decided but not built: the op contracts (ADR 0005, R2 and its addendum), the
+Status: skeleton. Only the build chain (C++ package plus optional Python module, with or without
+CUDA) and the atlas loader exist. Decided but not built: the op contracts (ADR 0005, R2 and its addendum), the
 rasterisation rule (ADR 0006), the CPU/CUDA backends and build options (ADR 0007, amended by ADR
 0008: dtype-generic interface, window rule, validation) and the op inventory with the public shape
 of the rasterisation ops (ADR 0009).
@@ -45,8 +45,8 @@ of the rasterisation ops (ADR 0009).
   and 2: position column `d` is array axis `d` (C order, axis 2 fastest), and the ownership
   tie-break puts axis 0 first (ADR 0007).
 - Mesh (`TetMesh`) = positions `(N,3)`, tetrahedra `(T,4)` i32, per-vertex values `(N,C)`;
-  positions and values share one dtype, float32 or float64 (ADR 0008/0009; today the code still uses
-  f32), where `C = 0` is allowed. Priors, stiffness and display metadata are not part of it; for samseg
+  positions and values share one dtype `F`, float32 or float64 (ADR 0008/0009), where `C = 0` is
+  allowed. Priors, stiffness and display metadata are not part of it; for samseg
   they live in `SamsegAtlas`, which holds the mesh rather than subclassing it.
 
 ```

@@ -14,6 +14,16 @@ def test_load_synthetic_atlas(synthetic_atlas: Path) -> None:
     assert atlas.stiffness == 0.1
 
 
+def test_load_dtype(synthetic_atlas: Path) -> None:
+    single = load_atlas_npz(synthetic_atlas)
+    double = load_atlas_npz(synthetic_atlas, dtype=np.float64)
+    assert single.mesh.positions.dtype == single.mesh.values.dtype == np.float32
+    assert double.mesh.positions.dtype == double.mesh.values.dtype == np.float64
+    assert double.mesh.tetrahedra.dtype == np.int32
+    assert double.affine.dtype == np.float64
+    np.testing.assert_array_equal(double.mesh.positions, single.mesh.positions)
+
+
 def test_load_adult_atlas(adult_atlas: Path) -> None:
     atlas = load_atlas_npz(adult_atlas)
     mesh = atlas.mesh

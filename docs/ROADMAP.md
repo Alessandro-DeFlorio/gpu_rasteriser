@@ -49,19 +49,17 @@ Every agent session reads this file first and updates it last. Status: `todo` / 
   for float/double; CUDA twin adds only a stream. Python mirrors the C++ names, takes arrays,
   `out=` all or nothing. `load_atlas_npz(dtype=float32)`, generic `TetMesh[F]`.
 
-## In progress
-- (none)
+- 2026-11-24 ADRs 0007–0009 merged into `main` (fast-forward, local). Owner: build the next items
+  as a prototype; the questions found while reviewing them are discussed once it exists (Open
+  questions, "deferred to the prototype").
+- 2026-11-24 Build options (ADR 0007/0008): `TETVOX_ENABLE_CUDA`, generated `tetvox/config.hpp`,
+  `tetvox.cuda_enabled`, `device_count()` = 0 in CPU-only builds, `tetvoxConfig.cmake` exporting
+  `tetvox_CUDA_ENABLED` and requiring CUDA only when built with it, `examples/cpp` working in both,
+  `check.sh` building both. Dtype-generic `TetMesh[F]`, `SamsegAtlas[F]`,
+  `load_atlas_npz(dtype=float32)` (ADR 0009). Details in `build.md`.
 
-## Next
-- todo — **Build options (ADR 0007/0008), first step.** `TETVOX_ENABLE_CUDA` (default ON; CUDA
-  enabled only under it), generated `tetvox/config.hpp` (`tetvox::cuda_enabled`,
-  `TETVOX_CUDA_ENABLED`), `tetvox.cuda_enabled`, `device_count()` returning 0 in a CPU-only build,
-  `tetvoxConfig.cmake` requiring CUDA only when built with it, `examples/cpp` working in both.
-  Dtype-generic Python containers (ADR 0009): `TetMesh(Generic[F])` and `SamsegAtlas[F]` with
-  `F ∈ {float32, float64}`, `load_atlas_npz(path, *, dtype=np.float32)`; update
-  `atlas-format.md`'s canonical-dtype column. `scripts/check.sh` also builds the CPU-only library
-  and runs the example against it. Check that the CPU-only build compiles.
-- todo — **Shared header + CPU backend (ADR 0006–0009).**
+## In progress
+- doing — **Shared header + CPU backend (ADR 0006–0009).**
   - Public headers: `tetvox/types.hpp` (`Real`, `GridShape`, `default_snap_bits`, `TetStatus`,
     `SkippedTets`, `MeshView<T>`, `TetSetupView<T>`), `tetvox/raster.hpp` (`snap`, `setup_tet`,
     `plane_values`, `owns`, `barycentric`, `row_span` as `__host__ __device__`, templated on
@@ -88,6 +86,8 @@ Every agent session reads this file first and updates it last. Status: `todo` / 
     - `snap_bits` outside 0–24 rejected.
   - Benchmark run-time vs `constexpr` k and report to the owner (ADR 0008). Extend `examples/cpp/`
     to run `setup_tets → rasterize` and `count_claims` on the Kuhn cube.
+
+## Next
 - todo — First CUDA backend for ops 1–6 of ADR 0009 (K3 for `locate`/`rasterize`, stream as the
   last parameter, row offsets via `cudaMallocAsync`; settle Python stream handling), bit-identical
   to the CPU backend; benchmark on the adult atlas at 256³. Extend `examples/cpp/` to run it on the
@@ -120,3 +120,13 @@ Every agent session reads this file first and updates it last. Status: `todo` / 
   that proves awkward (a small, local change).
 - How far to take curvature after `None` (`GaussNewton` is the cheapest next step, R2 addendum A4).
 - Run-time vs compile-time k (ADR 0008): decide from the CPU-backend benchmark.
+- Deferred to the prototype (owner, 2026-11-24). Each is built provisionally as noted and must be
+  confirmed or changed:
+  1. `TETVOX_ENABLE_CUDA=ON` without a CUDA compiler: provisionally CMake's own configure error
+     (recommended; a silent CPU-only fallback is the alternative).
+  2. `barycentrics` and the caller's `tet_id`: is a value outside `[−1, T)`, or one naming a skipped
+     tet, checked (pre-pass, `invalid_argument`; recommended) or a documented precondition?
+  3. torch tensors with `requires_grad=True` passed to plain ops: provisionally they fail in the
+     DLPack export (recommended; the alternative is a silent detach in the wrapper).
+  4. Range of `f_j`: ADR 0008 says `[0, 1]`, ADR 0009 `[0, 1)`. To be derived from the tie-break
+     folding in `setup_tet`; it bears on the float32 exactness behind `snap_bits ≤ 24`.

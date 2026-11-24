@@ -12,9 +12,9 @@ record (ADR 0005).
 
 | Key | Stored dtype | Shape | `SamsegAtlas` field (canonical dtype) | Meaning |
 |---|---|---|---|---|
-| `positions` | f32 (f64 in `atlas_adult_7_classes`) | (N, 3) | `mesh.positions` (f32) | vertex positions, **template voxel coordinates** |
+| `positions` | f32 (f64 in `atlas_adult_7_classes`) | (N, 3) | `mesh.positions` (`F`) | vertex positions, **template voxel coordinates** |
 | `tetrahedra` | i32 | (T, 4) | `mesh.tetrahedra` (i32) | vertex indices, 0-based |
-| `alphas` | f32 / f64 | (N, K) | `mesh.values` (f32) | per-vertex class priors α, rows sum to 1 (err ≤ 1.5e-6), min 0 |
+| `alphas` | f32 / f64 | (N, K) | `mesh.values` (`F`) | per-vertex class priors α, rows sum to 1 (err ≤ 1.5e-6), min 0 |
 | `affine` | f32 / f64 | (4, 4) | `affine` (f64) | template voxel → world (mm) |
 | `can_move` | bool | (N, 3) | `can_move` | per-axis mobility mask |
 | `names` | `<U..` | (K,) | `names` (tuple[str]) | class names |
@@ -24,7 +24,8 @@ record (ADR 0005).
 | `log_mass_laplace_kappa1` | f64 | () | not loaded (owner, 2026-11-23: out of scope) | only in full-class atlases. Laplace approximation of the deformation prior's cost (log mass) at κ = 1 (owner, 2026-11-23). The POC logs it rescaled to the effective κ as `log Z_u (Laplace)` (100.0 adult, −186309 infant) |
 | `mass_laplace_n_free` | i64 | () | not loaded | only in full-class atlases. Number of free coordinates in that Laplace approximation (162454 adult, 101437 infant; not 3·N). Prior-side data, not used by the rasteriser (ADR 0005) |
 
-Canonical dtypes: f32 for geometry and priors, f64 for the affine. Only `atlas_adult_7_classes.npz`
+Canonical dtypes: `F` for geometry and priors, chosen by `load_atlas_npz(path, dtype=...)`
+(float32 by default, or float64; ADR 0009), f64 for the affine. Only `atlas_adult_7_classes.npz`
 stores f64, and its values are the same atlas mesh.
 
 ## Atlases present
